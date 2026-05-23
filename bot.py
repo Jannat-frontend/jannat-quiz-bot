@@ -1,3 +1,4 @@
+import pkg_resources
 import os
 import json
 import logging
@@ -18,7 +19,6 @@ from telegram.ext import (
 )
 
 import razorpay
-import pkg_resources
 # ========== CONFIGURATION ==========
 TOKEN = os.environ.get("BOT_TOKEN")
 RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_OUGnz1rs9k9vFW")
