@@ -89,8 +89,6 @@ def get_main_keyboard():
     ]
 
     return InlineKeyboardMarkup(keyboard)
-```
-```python
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -188,8 +186,6 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt,
         reply_markup=get_main_keyboard()
     )
-```
-```python
 # ================= PAYMENT =================
 async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -299,8 +295,6 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎯 What is 2 + 2 ?",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-```
-```python
 # ================= ANSWERS =================
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -418,4 +412,3 @@ if __name__ == "__main__":
     keep_alive()
 
     main()
-```
