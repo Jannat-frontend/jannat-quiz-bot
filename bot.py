@@ -49,7 +49,7 @@ def keep_alive():
 
 # ========== CONFIGURATION ==========
 TOKEN = os.environ.get("BOT_TOKEN")
-RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_OUGnz1rs9k9vFW")
+RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID")
 RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))  # Your numeric Telegram ID
 
