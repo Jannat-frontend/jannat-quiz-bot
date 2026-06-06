@@ -74,7 +74,7 @@ def save_data(filename, data):
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-# ========== PERSISTENT REPLY KEYBOARD ==========
+# ========== PERSISTENT REPLY KEYBOARD - FIXED ==========
 def get_main_keyboard(user_id=None):
     """Get persistent reply keyboard menu - stays at bottom"""
     users = load_data("users.json")
@@ -96,7 +96,8 @@ def get_main_keyboard(user_id=None):
     else:
         keyboard.append(["🔒 Start Quiz"])
     
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, persistent=True)
+    # FIXED: Removed 'persistent=True' which causes crash
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 # ========== REGISTRATION START FUNCTION ==========
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -411,6 +412,7 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
 # ========== REAL QUIZ ==========
 async def start_real_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start real quiz (after payment)"""
+    print("START QUIZ COMMAND RECEIVED")  # Debug line
     user_id = update.effective_user.id
     users = load_data("users.json")
     
@@ -584,6 +586,29 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ConversationHandler.END
 
+# ========== START COMMAND ==========
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /start command"""
+    print("START COMMAND RECEIVED")  # Debug line to verify bot is receiving messages
+    user = update.effective_user
+    welcome_msg = f"""
+🏆 *JANNAT FOUNDATION QUIZ* 🏆
+
+Welcome {user.first_name}!
+
+💰 *Win ₹1000 Cash Prize!*
+
+*How it works:*
+1️⃣ Register with phone & password
+2️⃣ Pay ₹20 to unlock quiz
+3️⃣ Answer 1 question correctly
+4️⃣ Submit your UPI ID
+5️⃣ Get ₹1000 on Sunday!
+
+👇 *Use the buttons below* 👇
+"""
+    await update.message.reply_text(welcome_msg, parse_mode="Markdown", reply_markup=get_main_keyboard(user.id))
+
 # ========== ADMIN COMMANDS ==========
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -730,12 +755,10 @@ def main():
     )
     app.add_handler(edit_email_conv)
     
-    # Main menu handler (catch-all for text messages)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu))
-    
-    # Demo and quiz answer handlers (must come before main menu)
+    # IMPORTANT: Order matters! Demo and quiz handlers FIRST, then menu handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_demo_answer))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quiz_answer))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu))
     
     # Command handlers
     app.add_handler(CommandHandler("start", start))
@@ -747,27 +770,6 @@ def main():
     
     print("🤖 Jannat Foundation Quiz Bot is running with Persistent Reply Keyboard!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command"""
-    user = update.effective_user
-    welcome_msg = f"""
-🏆 *JANNAT FOUNDATION QUIZ* 🏆
-
-Welcome {user.first_name}!
-
-💰 *Win ₹1000 Cash Prize!*
-
-*How it works:*
-1️⃣ Register with phone & password
-2️⃣ Pay ₹20 to unlock quiz
-3️⃣ Answer 1 question correctly
-4️⃣ Submit your UPI ID
-5️⃣ Get ₹1000 on Sunday!
-
-👇 *Use the buttons below* 👇
-"""
-    await update.message.reply_text(welcome_msg, parse_mode="Markdown", reply_markup=get_main_keyboard(user.id))
 
 if __name__ == "__main__":
     keep_alive()
