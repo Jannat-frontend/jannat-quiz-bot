@@ -41,7 +41,7 @@ def get_keyboard(user_id=None):
     keyboard = [
         ["📝 Register", "👤 Profile"],
         ["🎯 Demo Quiz", "ℹ️ About"],
-        ["💳 Pay ₹1 (Test)", "💸 Set UPI"],  # Changed button text
+        ["💳 Pay ₹1", "💸 Set UPI"],
     ]
     
     if is_registered and has_paid:
@@ -64,12 +64,10 @@ Welcome {user.first_name}!
 
 *Steps:*
 1️⃣ Register
-2️⃣ Pay ₹1 (TEST MODE)
+2️⃣ Pay ₹1
 3️⃣ Answer 1 question
 4️⃣ Submit UPI
 5️⃣ Get ₹1000 on Sunday
-
-⚠️ *TEST MODE: Pay only ₹1*
 
 👇 *Tap buttons below* 👇
 """
@@ -200,7 +198,7 @@ async def handle_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if answer in letters:
         selected = demo["options"][letters[answer]]
         if selected == demo.get("correct"):
-            await update.message.reply_text("✅ Correct! Register and pay ₹1 (Test) to win ₹1000!", reply_markup=get_keyboard(user_id))
+            await update.message.reply_text("✅ Correct! Register and pay ₹1 to win ₹1000!", reply_markup=get_keyboard(user_id))
         else:
             await update.message.reply_text(f"❌ Wrong! Correct: {demo.get('correct')}", reply_markup=get_keyboard(user_id))
     else:
@@ -208,10 +206,10 @@ async def handle_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data["awaiting_demo"] = False
 
-# ========== PAYMENT - TEST MODE ₹1 ==========
+# ========== PAYMENT ==========
 async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send payment link - TEST MODE ₹1"""
-    print("💳 PAYMENT BUTTON CLICKED - TEST MODE ₹1")
+    """Send payment link"""
+    print("💳 PAYMENT BUTTON CLICKED")
     user_id = update.effective_user.id
     users = load_data("users.json")
     
@@ -219,13 +217,12 @@ async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Register first.", reply_markup=get_keyboard(user_id))
         return
     
-    # TEST MODE: ₹1 payment link
+    # Simple working payment link
     await update.message.reply_text(
-        "💳 *PAY ₹1 (TEST MODE)*\n\n"
+        "💳 *PAY ₹1 NOW*\n\n"
         "🔗 https://razorpay.me/@jannatfoundation\n\n"
-        "📝 *After payment, send Transaction ID to @imtiazs37*\n\n"
-        "Admin will verify and unlock your quiz.\n\n"
-        "⚠️ *TEST MODE: Pay only ₹1*",
+        "📝 *After payment, send your Transaction ID to @imtiazs37*\n\n"
+        "Admin will verify and unlock your quiz.",
         parse_mode="Markdown",
         reply_markup=get_keyboard(user_id)
     )
@@ -262,7 +259,7 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not users[str(user_id)].get("payment_completed"):
         await update.message.reply_text(
-            "❌ *Payment Required*\n\nClick '💳 Pay ₹1 (Test)' to pay.\n\nAfter payment, admin will verify.",
+            "❌ *Payment Required*\n\nClick '💳 Pay ₹1' to pay.\n\nAfter payment, admin will verify.",
             parse_mode="Markdown",
             reply_markup=get_keyboard(user_id)
         )
@@ -332,7 +329,7 @@ async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 save_data("users.json", users)
             
             await update.message.reply_text(
-                f"❌ *WRONG!*\nCorrect: {q.get('correct')}\n\nPay ₹1 (Test) to try again.",
+                f"❌ *WRONG!*\nCorrect: {q.get('correct')}\n\nPay ₹1 to try again.",
                 parse_mode="Markdown",
                 reply_markup=get_keyboard(user_id)
             )
@@ -350,14 +347,12 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🎯 1 Question
 📅 Payout: Sunday
 
-⚠️ *TEST MODE: Pay ₹1*
-
 *Contact:* @imtiazs37
 """
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_keyboard(update.effective_user.id))
 
 async def locked_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔒 *Quiz Locked*\n\nPay ₹1 first using '💳 Pay ₹1 (Test)' button.", parse_mode="Markdown", reply_markup=get_keyboard(update.effective_user.id))
+    await update.message.reply_text("🔒 *Quiz Locked*\n\nPay ₹1 first using '💳 Pay ₹1' button.", parse_mode="Markdown", reply_markup=get_keyboard(update.effective_user.id))
 
 # ========== ADMIN COMMANDS ==========
 async def verify_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -425,7 +420,7 @@ def main():
         print("❌ No BOT_TOKEN!")
         return
     
-    print(f"🤖 Bot starting in TEST MODE (₹1 payments)...")
+    print(f"🤖 Bot starting...")
     print(f"👑 Admin ID: {ADMIN_ID}")
     
     # Init files
@@ -454,11 +449,11 @@ def main():
     )
     app.add_handler(upi_conv)
     
-    # Direct button handlers
+    # Direct button handlers (NO duplicates)
     app.add_handler(MessageHandler(filters.Regex("^👤 Profile$"), show_profile))
     app.add_handler(MessageHandler(filters.Regex("^🎯 Demo Quiz$"), demo_quiz))
     app.add_handler(MessageHandler(filters.Regex("^ℹ️ About$"), about))
-    app.add_handler(MessageHandler(filters.Regex("^💳 Pay ₹1 \\(Test\\)$"), payment))
+    app.add_handler(MessageHandler(filters.Regex("^💳 Pay ₹1$"), payment))
     app.add_handler(MessageHandler(filters.Regex("^🔓 Start Quiz$"), start_quiz))
     app.add_handler(MessageHandler(filters.Regex("^🔒 Start Quiz$"), locked_quiz))
     
@@ -477,8 +472,7 @@ def main():
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("addq", add_q))
     
-    print("✅ Bot is running in TEST MODE! (₹1 payments)")
-    print("✅ Ready to receive messages.")
+    print("✅ Bot is running! Ready to receive messages.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
