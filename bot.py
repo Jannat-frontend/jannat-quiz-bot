@@ -515,9 +515,9 @@ def main():
     ))
     
     # Answer handlers (must be BEFORE main handler)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_demo))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quiz))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.Regex("^💳 Payment$"), create_payment))
+    app.add_handler(MessageHandler(filters.Regex("^🎯 Demo Quiz$"), start_demo_quiz))
+    app.add_handler(MessageHandler(filters.Regex("^🔓 Start Quiz$"), start_real_quiz))
     
     # Commands
     app.add_handler(CommandHandler("start", start))
