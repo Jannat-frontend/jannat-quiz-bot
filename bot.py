@@ -4,30 +4,12 @@ import logging
 import hashlib
 import random
 from datetime import datetime
-from functools import wraps
 
 from flask import Flask
 from threading import Thread
 
-from telegram import (
-    Update,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
-
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ConversationHandler,
-    ContextTypes,
-    filters
-)
-
-import razorpay
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, ContextTypes, filters
 
 # ================= KEEP ALIVE =================
 app_web = Flask(__name__)
@@ -46,14 +28,11 @@ def keep_alive():
 
 # ========== CONFIGURATION ==========
 TOKEN = os.environ.get("BOT_TOKEN")
-RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID")
-RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
-# States for conversation
-PHONE_REG, PASSWORD_REG, EDIT_NAME, EDIT_PLACE, EDIT_EMAIL, UPI_INPUT = range(6)
+# States
+PHONE_REG, PASSWORD_REG, UPI_INPUT = range(3)
 
-# Setup logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -71,23 +50,21 @@ def save_data(filename, data):
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-# ========== PERSISTENT REPLY KEYBOARD ==========
-def get_main_keyboard(user_id=None):
-    """Get persistent reply keyboard menu - stays at bottom"""
+# ========== KEYBOARD ==========
+def get_keyboard(user_id=None):
+    """Simple keyboard that stays visible"""
     users = load_data("users.json")
     is_registered = user_id and str(user_id) in users
     has_paid = False
     if is_registered:
         has_paid = users[str(user_id)].get("payment_completed", False)
     
-    # Create persistent reply keyboard buttons
     keyboard = [
-        ["📝 Register", "👤 My Profile"],
-        ["🎯 Demo Quiz", "ℹ️ About"],
-        ["💳 Payment", "💸 Set UPI"],
+        ["📝 Register", "👤 Profile"],
+        ["🎯 Demo", "ℹ️ About"],
+        ["💳 Pay ₹20", "💸 Set UPI"],
     ]
     
-    # Add Start Quiz button based on status
     if is_registered and has_paid:
         keyboard.append(["🔓 Start Quiz"])
     else:
@@ -95,537 +72,319 @@ def get_main_keyboard(user_id=None):
     
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# ========== REGISTRATION START FUNCTION ==========
-async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start registration - ask for phone number"""
-    await update.message.reply_text(
-        "📝 *Registration*\n\nPlease send your *Phone Number* (with country code):\n\nExample: +919876543210",
-        parse_mode="Markdown"
-    )
+# ========== START ==========
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /start"""
+    print("✅ /start received")
+    user = update.effective_user
+    msg = f"""
+🏆 *JANNAT FOUNDATION QUIZ* 🏆
+
+Welcome {user.first_name}!
+
+💰 *Win ₹1000!*
+
+*Steps:*
+1️⃣ Register
+2️⃣ Pay ₹20
+3️⃣ Answer 1 question
+4️⃣ Submit UPI
+5️⃣ Get ₹1000 on Sunday
+
+👇 *Tap buttons below* 👇
+"""
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=get_keyboard(user.id))
+
+# ========== REGISTRATION ==========
+async def reg_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📝 Send your *Phone Number* with country code:\nExample: +919876543210", parse_mode="Markdown")
     return PHONE_REG
 
-async def register_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive phone number"""
-    phone = update.message.text.strip()
-    context.user_data["reg_phone"] = phone
-    await update.message.reply_text(
-        "📝 Send your *Password* (minimum 4 characters):",
-        parse_mode="Markdown"
-    )
+async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["phone"] = update.message.text.strip()
+    await update.message.reply_text("📝 Send your *Password* (min 4 chars):", parse_mode="Markdown")
     return PASSWORD_REG
 
-async def register_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive password and complete registration"""
+async def reg_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text.strip()
     user_id = update.effective_user.id
     
     if len(password) < 4:
-        await update.message.reply_text("❌ Password must be at least 4 characters. Please try again.")
+        await update.message.reply_text("❌ Password too short. Try again.")
         return PASSWORD_REG
     
     users = load_data("users.json")
     
     if str(user_id) in users:
-        await update.message.reply_text("✅ You are already registered!", reply_markup=get_main_keyboard(user_id))
+        await update.message.reply_text("✅ Already registered!", reply_markup=get_keyboard(user_id))
         return ConversationHandler.END
     
-    # Save user
     users[str(user_id)] = {
-        "registered": True,
-        "phone": context.user_data["reg_phone"],
+        "phone": context.user_data["phone"],
         "password": hash_password(password),
         "name": "",
         "place": "",
         "email": "",
         "upi_id": "",
         "payment_completed": False,
-        "payment_link_id": None,
         "answered_questions": [],
         "correct_answers": 0,
-        "reward_pending": False,
         "registered_on": datetime.now().isoformat()
     }
     save_data("users.json", users)
     
-    await update.message.reply_text(
-        "✅ *Registration Successful!*\n\nYou can now:\n• Update your profile\n• Pay ₹20 to start quiz\n\nUse the buttons below:",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard(user_id)
-    )
+    await update.message.reply_text("✅ *Registration Successful!*", parse_mode="Markdown", reply_markup=get_keyboard(user_id))
     
-    # Notify admin
     if ADMIN_ID:
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"🆕 New User Registered!\nUser ID: {user_id}\nPhone: {context.user_data['reg_phone']}"
-        )
+        await context.bot.send_message(ADMIN_ID, f"🆕 New user: {user_id}\nPhone: {context.user_data['phone']}")
     
     return ConversationHandler.END
 
-# ========== UPI START FUNCTION ==========
-async def upi_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start UPI collection"""
-    await update.message.reply_text(
-        "💸 *Set UPI ID*\n\nPlease send your UPI ID.\n\nExample: username@okhdfcbank\n\n*Note: This is required to receive your prize money on Sunday!*",
-        parse_mode="Markdown"
-    )
-    return UPI_INPUT
-
-async def save_upi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Save UPI ID"""
-    upi_id = update.message.text.strip()
-    user_id = update.effective_user.id
-    
-    users = load_data("users.json")
-    if str(user_id) in users:
-        users[str(user_id)]["upi_id"] = upi_id
-        users[str(user_id)]["reward_pending"] = True
-        save_data("users.json", users)
-        
-        await update.message.reply_text(
-            "✅ *UPI ID Saved Successfully!*\n\n🏆 *Jannat Foundation will pay your prize on coming Sunday!*\n\nThank you for participating!",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard(user_id)
-        )
-        
-        if ADMIN_ID:
-            await context.bot.send_message(ADMIN_ID, f"💰 Winner! User: {user_id}\nUPI: {upi_id}")
-    else:
-        await update.message.reply_text("❌ Please register first.", reply_markup=get_main_keyboard(user_id))
-    
-    return ConversationHandler.END
-
-# ========== PROFILE FUNCTIONS ==========
-async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show user profile"""
+# ========== PROFILE ==========
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     users = load_data("users.json")
     
     if str(user_id) not in users:
-        await update.message.reply_text("❌ Please register first.", reply_markup=get_main_keyboard(user_id))
+        await update.message.reply_text("❌ Register first.", reply_markup=get_keyboard(user_id))
         return
     
-    user = users[str(user_id)]
-    profile_text = f"""
+    u = users[str(user_id)]
+    text = f"""
 👤 *Your Profile*
 
-📱 Phone: `{user.get('phone', 'Not set')}`
-👨 Name: {user.get('name', 'Not set')}
-📍 Place: {user.get('place', 'Not set')}
-📧 Email: {user.get('email', 'Not set')}
-💸 UPI: {user.get('upi_id', 'Not set')}
+📱 Phone: {u.get('phone', 'Not set')}
+👨 Name: {u.get('name', 'Not set')}
+📍 Place: {u.get('place', 'Not set')}
+📧 Email: {u.get('email', 'Not set')}
+💸 UPI: {u.get('upi_id', 'Not set')}
 
-💰 Payment: {'✅ Paid' if user.get('payment_completed') else '❌ Not Paid'}
-🎯 Correct Answers: {user.get('correct_answers', 0)}
-🏆 Reward Pending: {'Yes' if user.get('reward_pending') else 'No'}
+💰 Paid: {'✅ Yes' if u.get('payment_completed') else '❌ No'}
+✅ Correct: {u.get('correct_answers', 0)}
 """
-    await update.message.reply_text(profile_text, parse_mode="Markdown", reply_markup=get_main_keyboard(user_id))
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_keyboard(user_id))
 
-# ========== EDIT PROFILE FUNCTIONS ==========
-async def edit_name_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✏️ Send your new *Name*:", parse_mode="Markdown")
-    return EDIT_NAME
-
-async def edit_name_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ========== UPDATE PROFILE ==========
+async def update_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    name = update.message.text.replace("✏️ Name ", "").strip()
     users = load_data("users.json")
     if str(user_id) in users:
-        users[str(user_id)]["name"] = update.message.text.strip()
+        users[str(user_id)]["name"] = name
         save_data("users.json", users)
-        await update.message.reply_text("✅ Name updated!", reply_markup=get_main_keyboard(user_id))
-    return ConversationHandler.END
+        await update.message.reply_text("✅ Name updated!", reply_markup=get_keyboard(user_id))
+    else:
+        await update.message.reply_text("❌ Register first.", reply_markup=get_keyboard(user_id))
 
-async def edit_place_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📍 Send your new *Place/City*:", parse_mode="Markdown")
-    return EDIT_PLACE
-
-async def edit_place_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def update_place(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    place = update.message.text.replace("📍 Place ", "").strip()
     users = load_data("users.json")
     if str(user_id) in users:
-        users[str(user_id)]["place"] = update.message.text.strip()
+        users[str(user_id)]["place"] = place
         save_data("users.json", users)
-        await update.message.reply_text("✅ Place updated!", reply_markup=get_main_keyboard(user_id))
-    return ConversationHandler.END
+        await update.message.reply_text("✅ Place updated!", reply_markup=get_keyboard(user_id))
+    else:
+        await update.message.reply_text("❌ Register first.", reply_markup=get_keyboard(user_id))
 
-async def edit_email_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📧 Send your new *Email*:", parse_mode="Markdown")
-    return EDIT_EMAIL
-
-async def edit_email_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def update_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    email = update.message.text.replace("📧 Email ", "").strip()
     users = load_data("users.json")
     if str(user_id) in users:
-        users[str(user_id)]["email"] = update.message.text.strip()
+        users[str(user_id)]["email"] = email
         save_data("users.json", users)
-        await update.message.reply_text("✅ Email updated!", reply_markup=get_main_keyboard(user_id))
-    return ConversationHandler.END
+        await update.message.reply_text("✅ Email updated!", reply_markup=get_keyboard(user_id))
+    else:
+        await update.message.reply_text("❌ Register first.", reply_markup=get_keyboard(user_id))
 
 # ========== DEMO QUIZ ==========
-async def start_demo_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start demo quiz"""
+async def demo_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    demo_data = load_data("demo_question.json")
+    demo = {
+        "question": "What is the capital of France?",
+        "options": ["London", "Berlin", "Paris", "Madrid"],
+        "correct": "Paris"
+    }
+    context.user_data["demo_q"] = demo
+    context.user_data["awaiting_demo"] = True
     
-    if not demo_data:
-        demo_data = {"question": "What is 2 + 2?", "options": ["3", "4", "5", "6"], "correct": "4"}
-        save_data("demo_question.json", demo_data)
+    text = f"🎯 *DEMO QUIZ*\n\n{demo['question']}\n\n"
+    for i, opt in enumerate(demo["options"]):
+        text += f"{chr(65+i)}. {opt}\n"
+    text += "\n*Reply with A, B, C, or D*"
     
-    context.user_data["demo_question"] = demo_data
-    options_text = "\n".join([f"{chr(65+i)}. {opt}" for i, opt in enumerate(demo_data["options"])])
-    
-    await update.message.reply_text(
-        f"🎯 *DEMO QUIZ (FREE)*\n\n{demo_data['question']}\n\n{options_text}\n\n*Reply with the letter (A, B, C, or D) of your answer.*",
-        parse_mode="Markdown"
-    )
-    context.user_data["awaiting_demo_answer"] = True
+    await update.message.reply_text(text, parse_mode="Markdown")
 
-async def handle_demo_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle demo quiz answer - ONLY when expecting answer"""
-    if not context.user_data.get("awaiting_demo_answer"):
-        return  # Exit quietly if not expecting demo answer
+async def handle_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("awaiting_demo"):
+        return
     
     user_id = update.effective_user.id
     answer = update.message.text.strip().upper()
-    demo_q = context.user_data.get("demo_question", {})
+    demo = context.user_data.get("demo_q", {})
     
-    letter_map = {"A": 0, "B": 1, "C": 2, "D": 3}
-    if answer in letter_map:
-        selected = demo_q["options"][letter_map[answer]]
-        if selected == demo_q.get("correct"):
-            await update.message.reply_text(
-                "✅ Correct! Register and pay ₹20 to win ₹1000!",
-                reply_markup=get_main_keyboard(user_id)
-            )
+    letters = {"A": 0, "B": 1, "C": 2, "D": 3}
+    
+    if answer in letters:
+        selected = demo["options"][letters[answer]]
+        if selected == demo.get("correct"):
+            await update.message.reply_text("✅ Correct! Register and pay ₹20 to win ₹1000!", reply_markup=get_keyboard(user_id))
         else:
-            await update.message.reply_text(
-                f"❌ Wrong! Correct: {demo_q.get('correct')}\nRegister and pay ₹20!",
-                reply_markup=get_main_keyboard(user_id)
-            )
+            await update.message.reply_text(f"❌ Wrong! Correct: {demo.get('correct')}", reply_markup=get_keyboard(user_id))
     else:
-        await update.message.reply_text("Please reply with A, B, C, or D.", reply_markup=get_main_keyboard(user_id))
+        await update.message.reply_text("Reply with A, B, C, or D", reply_markup=get_keyboard(user_id))
     
-    context.user_data["awaiting_demo_answer"] = False
+    context.user_data["awaiting_demo"] = False
 
-# ========== PAYMENT FUNCTIONS ==========
-# FIXED: Using the working Razorpay payment link
-async def create_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send Razorpay payment link (working link)"""
-    print("💳 PAYMENT BUTTON CLICKED")
+# ========== PAYMENT ==========
+async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send payment link"""
     user_id = update.effective_user.id
     users = load_data("users.json")
     
     if str(user_id) not in users:
-        await update.message.reply_text("❌ Please register first.", reply_markup=get_main_keyboard(user_id))
+        await update.message.reply_text("❌ Register first.", reply_markup=get_keyboard(user_id))
         return
     
-    # FIXED: Using the working payment link
-    payment_link = "https://razorpay.me/@jannatfoundation"
+    # Working payment link
+    link = "https://razorpay.me/@jannatfoundation"
     
     await update.message.reply_text(
-        f"💳 *Payment Required*\n\n💰 Amount: ₹20\n\n🔗 [Click here to pay ₹20 via Razorpay]({payment_link})\n\n📝 *After payment, click '🔓 Start Quiz' to play!*\n\n*Note: Admin will verify your payment and unlock the quiz.*",
+        f"💳 *Pay ₹20*\n\n🔗 [Click here to pay]({link})\n\n📝 After payment, admin will verify and unlock quiz.\n\nSend Transaction ID to admin: @imtiazs37",
         parse_mode="Markdown",
-        reply_markup=get_main_keyboard(user_id),
+        reply_markup=get_keyboard(user_id),
         disable_web_page_preview=False
     )
 
-# FIXED: Manual payment verification (admin)
-async def verify_payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to verify user's payment"""
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Not authorized.")
-        return
-    
-    args = context.args
-    if len(args) < 1:
-        await update.message.reply_text("❌ Usage: /verify USER_ID")
-        return
-    
-    user_id = args[0]
+# ========== UPI ==========
+async def upi_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("💸 Send your *UPI ID*:\nExample: username@okhdfcbank", parse_mode="Markdown")
+    return UPI_INPUT
+
+async def save_upi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    upi = update.message.text.strip()
+    user_id = update.effective_user.id
     users = load_data("users.json")
     
-    if user_id not in users:
-        await update.message.reply_text(f"❌ User {user_id} not found.")
-        return
+    if str(user_id) in users:
+        users[str(user_id)]["upi_id"] = upi
+        save_data("users.json", users)
+        await update.message.reply_text("✅ UPI saved! Prize will be sent on Sunday.", reply_markup=get_keyboard(user_id))
+        
+        if ADMIN_ID:
+            await context.bot.send_message(ADMIN_ID, f"💰 UPI submitted!\nUser: {user_id}\nUPI: {upi}")
     
-    users[user_id]["payment_completed"] = True
-    save_data("users.json", users)
-    
-    await update.message.reply_text(f"✅ Payment verified for user {user_id}!")
-    
-    try:
-        await context.bot.send_message(
-            int(user_id),
-            "✅ *Payment Verified!* 🎉\n\n🔓 *Start Quiz is now UNLOCKED!*\n\nClick '🔓 Start Quiz' to play and win ₹1000!",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard(int(user_id))
-        )
-    except:
-        pass
+    return ConversationHandler.END
 
-# ========== REAL QUIZ ==========
-async def start_real_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start real quiz (after payment)"""
-    print("🎯 START QUIZ COMMAND RECEIVED")
+# ========== START QUIZ ==========
+async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     users = load_data("users.json")
     
     if str(user_id) not in users:
-        await update.message.reply_text("❌ Register first.", reply_markup=get_main_keyboard(user_id))
+        await update.message.reply_text("❌ Register first.", reply_markup=get_keyboard(user_id))
         return
     
-    # Check if payment completed
     if not users[str(user_id)].get("payment_completed"):
-        await update.message.reply_text(
-            "❌ Please complete payment (₹20) first.\n\nClick '💳 Payment' to pay.\n\nAfter payment, admin will verify and unlock the quiz.",
-            reply_markup=get_main_keyboard(user_id)
-        )
+        await update.message.reply_text("❌ Pay ₹20 first.", reply_markup=get_keyboard(user_id))
         return
     
-    # Load questions
     questions = load_data("questions.json")
     if not questions:
-        # Add default questions if none exist
-        default_questions = [
+        # Add default questions
+        questions = [
             {"id": "Q1", "text": "What is the capital of India?", "options": ["Mumbai", "Delhi", "Kolkata", "Chennai"], "correct": "Delhi"},
-            {"id": "Q2", "text": "Who wrote the Indian national anthem?", "options": ["Rabindranath Tagore", "Bankim Chandra Chattopadhyay", "Sarojini Naidu", "Mahatma Gandhi"], "correct": "Rabindranath Tagore"},
-            {"id": "Q3", "text": "Which is the largest desert in the world?", "options": ["Sahara", "Gobi", "Antarctic", "Arabian"], "correct": "Antarctic"},
+            {"id": "Q2", "text": "Who wrote the national anthem?", "options": ["Tagore", "Chattopadhyay", "Naidu", "Gandhi"], "correct": "Tagore"},
+            {"id": "Q3", "text": "Which planet is called Red Planet?", "options": ["Mars", "Jupiter", "Venus", "Saturn"], "correct": "Mars"},
         ]
-        save_data("questions.json", default_questions)
-        questions = default_questions
-        print("📚 Added default questions")
+        save_data("questions.json", questions)
     
     answered = users[str(user_id)].get("answered_questions", [])
     available = [q for q in questions if q["id"] not in answered]
     
     if not available:
-        await update.message.reply_text(
-            "🎉 *Congratulations!* 🎉\n\nYou have answered all available questions!\n\nNew questions will be added soon.",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard(user_id)
-        )
+        await update.message.reply_text("🎉 You answered all questions! New ones coming soon.", reply_markup=get_keyboard(user_id))
         return
     
-    question = random.choice(available)
-    context.user_data["current_question"] = question
-    options_text = "\n".join([f"{chr(65+i)}. {opt}" for i, opt in enumerate(question["options"])])
+    q = random.choice(available)
+    context.user_data["current_q"] = q
+    context.user_data["awaiting_quiz"] = True
     
-    await update.message.reply_text(
-        f"🎯 *QUIZ TIME!*\n\n*Question:* {question['text']}\n\n{options_text}\n\n*Reply with the letter (A, B, C, or D) of your answer.*",
-        parse_mode="Markdown"
-    )
-    context.user_data["awaiting_quiz_answer"] = True
+    text = f"🎯 *QUIZ*\n\n{q['text']}\n\n"
+    for i, opt in enumerate(q["options"]):
+        text += f"{chr(65+i)}. {opt}\n"
+    text += "\n*Reply with A, B, C, or D*"
+    
+    await update.message.reply_text(text, parse_mode="Markdown")
 
-async def handle_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle real quiz answer - ONLY when expecting answer"""
-    if not context.user_data.get("awaiting_quiz_answer"):
-        return  # Exit quietly if not expecting quiz answer
+async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("awaiting_quiz"):
+        return
     
     user_id = update.effective_user.id
     answer = update.message.text.strip().upper()
-    question = context.user_data.get("current_question", {})
+    q = context.user_data.get("current_q", {})
     
-    letter_map = {"A": 0, "B": 1, "C": 2, "D": 3}
+    letters = {"A": 0, "B": 1, "C": 2, "D": 3}
     
-    if answer in letter_map:
-        selected = question["options"][letter_map[answer]]
+    if answer in letters:
+        selected = q["options"][letters[answer]]
         users = load_data("users.json")
         
-        if selected == question.get("correct"):
+        if selected == q.get("correct"):
             if str(user_id) in users:
                 answered = users[str(user_id)].get("answered_questions", [])
-                if question["id"] not in answered:
-                    answered.append(question["id"])
+                if q["id"] not in answered:
+                    answered.append(q["id"])
                     users[str(user_id)]["answered_questions"] = answered
                     users[str(user_id)]["correct_answers"] = users[str(user_id)].get("correct_answers", 0) + 1
                     save_data("users.json", users)
             
             await update.message.reply_text(
-                "✅ *CORRECT ANSWER!* 🎉\n\n🏆 *Please click '💸 Set UPI' to receive your ₹1000 prize on Sunday!*",
+                "✅ *CORRECT!* 🎉\n\nTap '💸 Set UPI' to claim ₹1000!",
                 parse_mode="Markdown",
-                reply_markup=get_main_keyboard(user_id)
+                reply_markup=get_keyboard(user_id)
             )
             
             if ADMIN_ID:
-                await context.bot.send_message(
-                    ADMIN_ID,
-                    f"✅ User {user_id} answered correctly!\nQuestion: {question.get('text')}"
-                )
+                await context.bot.send_message(ADMIN_ID, f"✅ User {user_id} answered correctly!")
         else:
-            # Wrong answer - payment reset
+            # Wrong answer - reset payment
             if str(user_id) in users:
                 users[str(user_id)]["payment_completed"] = False
                 save_data("users.json", users)
             
             await update.message.reply_text(
-                f"❌ *WRONG ANSWER!*\n\nThe correct answer was: *{question.get('correct')}*\n\n💳 *Please pay ₹20 to try again.*",
+                f"❌ *WRONG!*\nCorrect: {q.get('correct')}\n\nPay ₹20 to try again.",
                 parse_mode="Markdown",
-                reply_markup=get_main_keyboard(user_id)
+                reply_markup=get_keyboard(user_id)
             )
     else:
-        await update.message.reply_text("Please reply with A, B, C, or D.", reply_markup=get_main_keyboard(user_id))
+        await update.message.reply_text("Reply with A, B, C, or D", reply_markup=get_keyboard(user_id))
     
-    context.user_data["awaiting_quiz_answer"] = False
+    context.user_data["awaiting_quiz"] = False
 
 # ========== ABOUT ==========
-async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show about information"""
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    about_text = """
-📖 *About Jannat Foundation Quiz*
+    text = """
+📖 *Jannat Foundation Quiz*
 
-💰 *Prize:* ₹1000 per correct answer
-🎯 *Quiz:* 1 question per attempt
-📅 *Payout:* Every Sunday
-
-*Rules:*
-• Register with valid phone number
-• Pay ₹20 to play
-• Answer correctly to win
-• Submit UPI ID for payout
-• Wrong answer? Pay ₹20 to try again
+💰 Prize: ₹1000
+🎯 1 Question
+📅 Payout: Sunday
 
 *Contact:* @imtiazs37
-
-*Jannat Foundation Trust*
 """
-    await update.message.reply_text(about_text, parse_mode="Markdown", reply_markup=get_main_keyboard(user_id))
-
-# ========== MAIN MESSAGE HANDLER ==========
-async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Main menu router for reply keyboard buttons"""
-    text = update.message.text
-    user_id = update.effective_user.id
-    
-    print(f"📱 MENU BUTTON PRESSED: '{text}'")  # Debug
-    
-    if text == "📝 Register":
-        return await register_start(update, context)
-    
-    elif text == "👤 My Profile":
-        return await show_profile(update, context)
-    
-    elif text == "🎯 Demo Quiz":
-        return await start_demo_quiz(update, context)
-    
-    elif text == "ℹ️ About":
-        return await show_about(update, context)
-    
-    elif text == "💳 Payment":
-        return await create_payment(update, context)
-    
-    elif text == "💸 Set UPI":
-        return await upi_start(update, context)
-    
-    elif text == "🔓 Start Quiz":
-        return await start_real_quiz(update, context)
-    
-    elif text == "🔒 Start Quiz":
-        await update.message.reply_text(
-            "🔒 *Quiz Locked*\n\nPlease complete payment (₹20) first.\n\nClick '💳 Payment' to pay.",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard(user_id)
-        )
-        return
-    
-    elif text == "✏️ Update Name":
-        return await edit_name_start(update, context)
-    
-    elif text == "📍 Update Place":
-        return await edit_place_start(update, context)
-    
-    elif text == "📧 Update Email":
-        return await edit_email_start(update, context)
-    
-    elif text == "🔙 Main Menu":
-        await update.message.reply_text("Main Menu:", reply_markup=get_main_keyboard(user_id))
-    
-    return ConversationHandler.END
-
-# ========== START COMMAND ==========
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command"""
-    print("🚀 START COMMAND RECEIVED")
-    user = update.effective_user
-    welcome_msg = f"""
-🏆 *JANNAT FOUNDATION QUIZ* 🏆
-
-Welcome {user.first_name}!
-
-💰 *Win ₹1000 Cash Prize!*
-
-*How it works:*
-1️⃣ Register with phone & password
-2️⃣ Pay ₹20 to unlock quiz
-3️⃣ Answer 1 question correctly
-4️⃣ Submit your UPI ID
-5️⃣ Get ₹1000 on Sunday!
-
-👇 *Use the buttons below* 👇
-"""
-    await update.message.reply_text(welcome_msg, parse_mode="Markdown", reply_markup=get_main_keyboard(user.id))
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_keyboard(user_id))
 
 # ========== ADMIN COMMANDS ==========
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def verify_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Not authorized.")
-        return
-    users = load_data("users.json")
-    questions = load_data("questions.json")
-    
-    stats_text = f"""
-📊 *Admin Statistics*
-
-👥 Total Users: {len(users)}
-💰 Paid Users: {sum(1 for u in users.values() if u.get('payment_completed'))}
-✅ Correct Answers: {sum(u.get('correct_answers', 0) for u in users.values())}
-📚 Questions: {len(questions)}
-"""
-    await update.message.reply_text(stats_text, parse_mode="Markdown")
-
-async def add_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Not authorized.")
-        return
-    args = context.args
-    if len(args) < 6:
-        await update.message.reply_text(
-            "❌ Usage:\n/add_question \"Question\" \"Opt1\" \"Opt2\" \"Opt3\" \"Opt4\" \"Correct\"\n\nExample:\n/add_question \"What is 2+2?\" \"3\" \"4\" \"5\" \"6\" \"4\""
-        )
         return
     
-    questions = load_data("questions.json")
-    new_id = f"Q{len(questions) + 1}"
-    questions.append({
-        "id": new_id,
-        "text": args[0],
-        "options": [args[1], args[2], args[3], args[4]],
-        "correct": args[5]
-    })
-    save_data("questions.json", questions)
-    await update.message.reply_text(f"✅ Question added!\nID: {new_id}\nQuestion: {args[0]}")
-
-async def update_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Not authorized.")
-        return
-    args = context.args
-    if len(args) < 5:
-        await update.message.reply_text("Usage: /update_demo Question Opt1 Opt2 Opt3 Opt4 Correct")
-        return
-    demo_q = {
-        "question": args[0],
-        "options": [args[1], args[2], args[3], args[4]],
-        "correct": args[5] if len(args) > 5 else args[4]
-    }
-    save_data("demo_question.json", demo_q)
-    await update.message.reply_text("✅ Demo question updated!")
-
-async def verify_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: Verify user payment"""
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Not authorized.")
-        return
     args = context.args
     if len(args) < 1:
         await update.message.reply_text("❌ Usage: /verify USER_ID")
@@ -641,31 +400,87 @@ async def verify_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users[user_id]["payment_completed"] = True
     save_data("users.json", users)
     
-    await update.message.reply_text(f"✅ Payment verified for user {user_id}!")
+    await update.message.reply_text(f"✅ Verified user {user_id}!")
     
     try:
-        await context.bot.send_message(
-            int(user_id),
-            "✅ *Payment Verified!* 🎉\n\n🔓 *Start Quiz is now UNLOCKED!*\n\nClick '🔓 Start Quiz' to play and win ₹1000!",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard(int(user_id))
-        )
-    except Exception as e:
-        print(f"Could not notify user: {e}")
+        await context.bot.send_message(int(user_id), "✅ *Payment Verified!* 🔓 Tap '🔓 Start Quiz' to play!", parse_mode="Markdown")
+    except:
+        pass
 
-async def pending_upi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Not authorized.")
         return
+    
     users = load_data("users.json")
-    pending = []
-    for uid, user in users.items():
-        if user.get("reward_pending") and user.get("upi_id"):
-            pending.append(f"User: {uid}\n   Name: {user.get('name', 'N/A')}\n   UPI: {user.get('upi_id')}\n")
-    if pending:
-        await update.message.reply_text(f"💰 *Pending Payouts (Sunday)*\n\n{chr(10).join(pending)}", parse_mode="Markdown")
-    else:
-        await update.message.reply_text("No pending payouts.")
+    questions = load_data("questions.json")
+    
+    paid = sum(1 for u in users.values() if u.get("payment_completed"))
+    
+    await update.message.reply_text(f"📊 Stats\nUsers: {len(users)}\nPaid: {paid}\nQuestions: {len(questions)}")
+
+async def add_q(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Not authorized.")
+        return
+    
+    args = context.args
+    if len(args) < 6:
+        await update.message.reply_text("Usage: /addq Q? Opt1 Opt2 Opt3 Opt4 Correct")
+        return
+    
+    questions = load_data("questions.json")
+    q = {
+        "id": f"Q{len(questions)+1}",
+        "text": args[0],
+        "options": [args[1], args[2], args[3], args[4]],
+        "correct": args[5]
+    }
+    questions.append(q)
+    save_data("questions.json", questions)
+    await update.message.reply_text(f"✅ Added: {q['id']}")
+
+# ========== MAIN MESSAGE HANDLER ==========
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle all button presses"""
+    text = update.message.text
+    user_id = update.effective_user.id
+    
+    print(f"📱 BUTTON: '{text}'")  # Debug
+    
+    if text == "📝 Register":
+        return await reg_start(update, context)
+    elif text == "👤 Profile":
+        return await profile(update, context)
+    elif text == "🎯 Demo":
+        return await demo_quiz(update, context)
+    elif text == "ℹ️ About":
+        return await about(update, context)
+    elif text == "💳 Pay ₹20":
+        return await payment(update, context)
+    elif text == "💸 Set UPI":
+        return await upi_start(update, context)
+    elif text == "🔓 Start Quiz":
+        return await start_quiz(update, context)
+    elif text == "🔒 Start Quiz":
+        await update.message.reply_text("🔒 Pay ₹20 first.", reply_markup=get_keyboard(user_id))
+        return
+    elif text == "✏️ Name":
+        return await update_name(update, context)
+    elif text == "📍 Place":
+        return await update_place(update, context)
+    elif text == "📧 Email":
+        return await update_email(update, context)
+    
+    # Handle profile updates
+    if text.startswith("✏️ Name "):
+        await update_name(update, context)
+    elif text.startswith("📍 Place "):
+        await update_place(update, context)
+    elif text.startswith("📧 Email "):
+        await update_email(update, context)
+    
+    return ConversationHandler.END
 
 # ========== MAIN ==========
 def main():
@@ -673,83 +488,44 @@ def main():
         print("❌ No BOT_TOKEN!")
         return
     
-    print(f"🤖 Bot Token: {TOKEN[:10]}...")
+    print(f"🤖 Bot starting...")
     print(f"👑 Admin ID: {ADMIN_ID}")
     
-    # Initialize files
-    for f in ["users.json", "questions.json", "payments.json"]:
+    # Init files
+    for f in ["users.json", "questions.json"]:
         if not os.path.exists(f):
             save_data(f, {} if f != "questions.json" else [])
-    if not os.path.exists("demo_question.json"):
-        save_data("demo_question.json", {"question": "What is 2+2?", "options": ["3", "4", "5", "6"], "correct": "4"})
-    
-    # Add default questions if none
-    questions = load_data("questions.json")
-    if not questions:
-        default_questions = [
-            {"id": "Q1", "text": "What is the capital of India?", "options": ["Mumbai", "Delhi", "Kolkata", "Chennai"], "correct": "Delhi"},
-            {"id": "Q2", "text": "Who wrote the Indian national anthem?", "options": ["Rabindranath Tagore", "Bankim Chandra Chattopadhyay", "Sarojini Naidu", "Mahatma Gandhi"], "correct": "Rabindranath Tagore"},
-            {"id": "Q3", "text": "Which planet is known as the Red Planet?", "options": ["Mars", "Jupiter", "Venus", "Saturn"], "correct": "Mars"},
-        ]
-        save_data("questions.json", default_questions)
-        print("📚 Added default questions")
     
     app = Application.builder().token(TOKEN).build()
     
     # Conversation handlers
-    reg_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📝 Register$"), register_start)],
+    app.add_handler(ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^📝 Register$"), reg_start)],
         states={
-            PHONE_REG: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_phone)],
-            PASSWORD_REG: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_password)],
+            PHONE_REG: [MessageHandler(filters.TEXT & ~filters.COMMAND, reg_phone)],
+            PASSWORD_REG: [MessageHandler(filters.TEXT & ~filters.COMMAND, reg_password)],
         },
         fallbacks=[]
-    )
-    app.add_handler(reg_conv)
+    ))
     
-    upi_conv = ConversationHandler(
+    app.add_handler(ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^💸 Set UPI$"), upi_start)],
         states={UPI_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_upi)]},
         fallbacks=[]
-    )
-    app.add_handler(upi_conv)
+    ))
     
-    edit_name_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^✏️ Update Name$"), edit_name_start)],
-        states={EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_name_save)]},
-        fallbacks=[]
-    )
-    app.add_handler(edit_name_conv)
+    # Answer handlers (must be BEFORE main handler)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_demo))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quiz))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    edit_place_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📍 Update Place$"), edit_place_start)],
-        states={EDIT_PLACE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_place_save)]},
-        fallbacks=[]
-    )
-    app.add_handler(edit_place_conv)
-    
-    edit_email_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📧 Update Email$"), edit_email_start)],
-        states={EDIT_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_email_save)]},
-        fallbacks=[]
-    )
-    app.add_handler(edit_email_conv)
-    
-    # IMPORTANT: Order matters! Specific handlers FIRST, then generic menu handler
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_demo_answer))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quiz_answer))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu))
-    
-    # Command handlers
+    # Commands
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("verify", verify_user))
     app.add_handler(CommandHandler("stats", admin_stats))
-    app.add_handler(CommandHandler("add_question", add_question))
-    app.add_handler(CommandHandler("update_demo", update_demo))
-    app.add_handler(CommandHandler("verify", verify_payment))
-    app.add_handler(CommandHandler("pending_upi", pending_upi))
+    app.add_handler(CommandHandler("addq", add_q))
     
-    print("🤖 Jannat Foundation Quiz Bot is running!")
-    print("✅ All handlers registered. Waiting for messages...")
+    print("✅ Bot is running!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
