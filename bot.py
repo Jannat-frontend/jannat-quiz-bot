@@ -3,13 +3,20 @@ import json
 import logging
 import hashlib
 import random
+import asyncio
 from datetime import datetime
+from threading import Thread
 
+from flask import Flask, request, jsonify
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, ContextTypes, filters
 
+import razorpay
+
 # ========== CONFIGURATION ==========
 TOKEN = os.environ.get("BOT_TOKEN")
+RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID")
+RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
 # States
@@ -17,6 +24,71 @@ PHONE_REG, PASSWORD_REG, UPI_INPUT = range(3)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ========== RAZORPAY CLIENT ==========
+razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+
+# ========== FLASK WEBHOOK SERVER ==========
+web_app = Flask(__name__)
+telegram_app = None  # Will be set later
+
+@web_app.route("/razorpay-webhook", methods=["POST"])
+def razorpay_webhook():
+    """Receive payment confirmation from Razorpay"""
+    try:
+        payload = request.get_json()
+        event = payload.get("event", "")
+
+        if event != "payment.captured":
+            return jsonify({"status": "ignored"}), 200
+
+        # Extract payment details
+        payment = payload["payload"]["payment"]["entity"]
+        notes = payment.get("notes", {})
+        telegram_id = notes.get("telegram_id")
+
+        if not telegram_id:
+            return jsonify({"error": "No telegram_id in notes"}), 400
+
+        # Mark user as paid
+        users = load_data("users.json")
+        if str(telegram_id) in users:
+            users[str(telegram_id)]["payment_completed"] = True
+            save_data("users.json", users)
+            logger.info(f"✅ Payment confirmed for user {telegram_id}")
+
+            # Send confirmation to user asynchronously
+            if telegram_app:
+                async def send_confirmation():
+                    try:
+                        await telegram_app.bot.send_message(
+                            chat_id=int(telegram_id),
+                            text="✅ *Payment Confirmed!* 🎉\n\n🔓 Press '🔓 Start Quiz' to play!",
+                            parse_mode="Markdown"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to send confirmation: {e}")
+
+                # Run async task inside Flask
+                asyncio.run_coroutine_threadsafe(
+                    send_confirmation(), 
+                    asyncio.get_event_loop()
+                )
+
+        return jsonify({"status": "success"}), 200
+
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@web_app.route("/")
+def home():
+    return "Jannat Quiz Bot Webhook is running!"
+
+def start_flask():
+    """Run Flask in a separate thread"""
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 # ========== DATA FUNCTIONS ==========
 def load_data(filename):
@@ -51,9 +123,8 @@ def get_keyboard(user_id=None):
     
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# ========== START ==========
+# ========== TELEGRAM BOT HANDLERS ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("✅ /start received")
     user = update.effective_user
     msg = f"""
 🏆 *JANNAT FOUNDATION QUIZ* 🏆
@@ -64,7 +135,7 @@ Welcome {user.first_name}!
 
 *Steps:*
 1️⃣ Register
-2️⃣ Pay ₹1
+2️⃣ Pay ₹1 (test mode)
 3️⃣ Answer 1 question
 4️⃣ Submit UPI
 5️⃣ Get ₹1000 on Sunday
@@ -109,10 +180,6 @@ async def register_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_data("users.json", users)
     
     await update.message.reply_text("✅ *Registration Successful!*", parse_mode="Markdown", reply_markup=get_keyboard(user_id))
-    
-    if ADMIN_ID:
-        await context.bot.send_message(ADMIN_ID, f"🆕 New user: {user_id}\nPhone: {context.user_data['phone']}")
-    
     return ConversationHandler.END
 
 # ========== PROFILE ==========
@@ -206,10 +273,9 @@ async def handle_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data["awaiting_demo"] = False
 
-# ========== PAYMENT ==========
+# ========== PAYMENT – DYNAMIC LINK + WEBHOOK ==========
 async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send payment link"""
-    print("💳 PAYMENT BUTTON CLICKED")
+    """Create Razorpay Payment Link (₹1 test)"""
     user_id = update.effective_user.id
     users = load_data("users.json")
     
@@ -217,15 +283,40 @@ async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Register first.", reply_markup=get_keyboard(user_id))
         return
     
-    # Simple working payment link
-    await update.message.reply_text(
-        "💳 *PAY ₹1 NOW*\n\n"
-        "🔗 https://razorpay.me/@jannatfoundation\n\n"
-        "📝 *After payment, send your Transaction ID to @imtiazs37*\n\n"
-        "Admin will verify and unlock your quiz.",
-        parse_mode="Markdown",
-        reply_markup=get_keyboard(user_id)
-    )
+    phone = users[str(user_id)].get("phone", "")
+    
+    try:
+        # Create a payment link tied to this user
+        payment_link = razorpay_client.payment_link.create({
+            "amount": 100,  # ₹1 = 100 paise
+            "currency": "INR",
+            "description": f"Quiz Payment - User {user_id}",
+            "customer": {"contact": phone} if phone else {},
+            "notes": {"telegram_id": str(user_id)},
+            "notify": {"sms": False, "email": False},
+            "reminder_enable": False,
+            "callback_url": f"https://jannat-quiz-bot.onrender.com/razorpay-webhook",
+            "callback_method": "get"
+        })
+        
+        payment_url = payment_link["short_url"]
+        
+        # Store the link ID to verify later (optional)
+        users[str(user_id)]["last_payment_link"] = payment_link["id"]
+        save_data("users.json", users)
+        
+        await update.message.reply_text(
+            f"💳 *PAY ₹1 (TEST MODE)*\n\n"
+            f"🔗 [Click here to pay]({payment_url})\n\n"
+            f"✅ *After payment, your quiz will be UNLOCKED automatically!*\n\n"
+            f"Then press '🔓 Start Quiz'.",
+            parse_mode="Markdown",
+            reply_markup=get_keyboard(user_id)
+        )
+        
+    except Exception as e:
+        logger.error(f"Payment error: {e}")
+        await update.message.reply_text("❌ Payment error. Please try again later.", reply_markup=get_keyboard(user_id))
 
 # ========== UPI ==========
 async def upi_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -249,7 +340,6 @@ async def save_upi(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== START QUIZ ==========
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("🎯 START QUIZ CLICKED")
     user_id = update.effective_user.id
     users = load_data("users.json")
     
@@ -259,7 +349,7 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not users[str(user_id)].get("payment_completed"):
         await update.message.reply_text(
-            "❌ *Payment Required*\n\nClick '💳 Pay ₹1' to pay.\n\nAfter payment, admin will verify.",
+            "❌ *Payment Required*\n\nClick '💳 Pay ₹1' to pay.",
             parse_mode="Markdown",
             reply_markup=get_keyboard(user_id)
         )
@@ -320,9 +410,6 @@ async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=get_keyboard(user_id)
             )
-            
-            if ADMIN_ID:
-                await context.bot.send_message(ADMIN_ID, f"✅ User {user_id} answered correctly!")
         else:
             if str(user_id) in users:
                 users[str(user_id)]["payment_completed"] = False
@@ -338,7 +425,7 @@ async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data["awaiting_quiz"] = False
 
-# ========== ABOUT ==========
+# ========== ABOUT & LOCKED QUIZ ==========
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = """
 📖 *Jannat Foundation Quiz*
@@ -414,22 +501,28 @@ async def add_q(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_data("questions.json", questions)
     await update.message.reply_text(f"✅ Added: {q['id']}")
 
-# ========== MAIN ==========
+# ========== MAIN – START BOTH FLASK AND TELEGRAM ==========
 def main():
+    global telegram_app
+    
     if not TOKEN:
         print("❌ No BOT_TOKEN!")
         return
     
-    print(f"🤖 Bot starting...")
+    print("🤖 Bot starting in TEST MODE (₹1 payments)...")
     print(f"👑 Admin ID: {ADMIN_ID}")
     
-    # Init files
+    # Init JSON files
     for f in ["users.json", "questions.json"]:
         if not os.path.exists(f):
             save_data(f, {} if f != "questions.json" else [])
     
-    # Create application
-    app = Application.builder().token(TOKEN).build()
+    # Start Flask in background thread
+    Thread(target=start_flask, daemon=True).start()
+    print("✅ Flask webhook server started on port 10000")
+    
+    # Build Telegram app
+    telegram_app = Application.builder().token(TOKEN).build()
     
     # Conversation handlers
     reg_conv = ConversationHandler(
@@ -440,40 +533,41 @@ def main():
         },
         fallbacks=[]
     )
-    app.add_handler(reg_conv)
+    telegram_app.add_handler(reg_conv)
     
     upi_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^💸 Set UPI$"), upi_start)],
         states={UPI_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_upi)]},
         fallbacks=[]
     )
-    app.add_handler(upi_conv)
+    telegram_app.add_handler(upi_conv)
     
-    # Direct button handlers (NO duplicates)
-    app.add_handler(MessageHandler(filters.Regex("^👤 Profile$"), show_profile))
-    app.add_handler(MessageHandler(filters.Regex("^🎯 Demo Quiz$"), demo_quiz))
-    app.add_handler(MessageHandler(filters.Regex("^ℹ️ About$"), about))
-    app.add_handler(MessageHandler(filters.Regex("^💳 Pay ₹1$"), payment))
-    app.add_handler(MessageHandler(filters.Regex("^🔓 Start Quiz$"), start_quiz))
-    app.add_handler(MessageHandler(filters.Regex("^🔒 Start Quiz$"), locked_quiz))
+    # Direct button handlers
+    telegram_app.add_handler(MessageHandler(filters.Regex("^👤 Profile$"), show_profile))
+    telegram_app.add_handler(MessageHandler(filters.Regex("^🎯 Demo Quiz$"), demo_quiz))
+    telegram_app.add_handler(MessageHandler(filters.Regex("^ℹ️ About$"), about))
+    telegram_app.add_handler(MessageHandler(filters.Regex("^💳 Pay ₹1$"), payment))
+    telegram_app.add_handler(MessageHandler(filters.Regex("^🔓 Start Quiz$"), start_quiz))
+    telegram_app.add_handler(MessageHandler(filters.Regex("^🔒 Start Quiz$"), locked_quiz))
     
     # Answer handlers
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_demo))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quiz))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_demo))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quiz))
     
     # Profile update handlers
-    app.add_handler(MessageHandler(filters.Regex("^✏️ Name "), update_name))
-    app.add_handler(MessageHandler(filters.Regex("^📍 Place "), update_place))
-    app.add_handler(MessageHandler(filters.Regex("^📧 Email "), update_email))
+    telegram_app.add_handler(MessageHandler(filters.Regex("^✏️ Name "), update_name))
+    telegram_app.add_handler(MessageHandler(filters.Regex("^📍 Place "), update_place))
+    telegram_app.add_handler(MessageHandler(filters.Regex("^📧 Email "), update_email))
     
     # Commands
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("verify", verify_user))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("addq", add_q))
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("verify", verify_user))
+    telegram_app.add_handler(CommandHandler("stats", stats))
+    telegram_app.add_handler(CommandHandler("addq", add_q))
     
-    print("✅ Bot is running! Ready to receive messages.")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    print("✅ Telegram bot is ready. Waiting for messages...")
+    print("📡 Webhook URL: https://jannat-quiz-bot.onrender.com/razorpay-webhook")
+    telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
