@@ -21,7 +21,7 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
 # Quiz settings
 QUESTIONS_PER_QUIZ = 2
-DONATION_AMOUNT = 100  # 100 paise = ₹1 (change to 2000 for ₹20 in production)
+DONATION_AMOUNT = 100  # 100 paise = ₹1
 
 # Logging
 logging.basicConfig(
@@ -36,63 +36,38 @@ razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 # ========== FLASK WEBHOOK ==========
 web_app = Flask(__name__)
 
+# Store bot application for webhook processing
+telegram_application = None
+
 # ========== TELEGRAM WEBHOOK ROUTE ==========
-@web_app.route("/webhook", methods=["POST"])
+@web_app.route("/webhook", methods=["POST", "GET"])
 def telegram_webhook():
+    """Receive updates from Telegram via webhook"""
+    if request.method == "GET":
+        return jsonify({"status": "alive", "message": "Webhook endpoint is working"}), 200
+    
     try:
         update_data = request.get_json()
+        logger.info(f"📨 Telegram webhook received")
         
-        if update_data and 'message' in update_data:
-            message = update_data['message']
-            chat_id = message['chat']['id']
-            text = message.get('text', '')
-            
-            logger.info(f"📱 Message from {chat_id}: {text}")
-            
-            if text == '/start':
-                send_telegram_message(chat_id, get_start_message())
-                send_keyboard(chat_id)
-            elif text == "📝 Register":
-                set_user_state(chat_id, "awaiting_phone")
-                send_telegram_message(chat_id, "📝 Send your *Phone Number* with country code:\nExample: +919876543210", parse_mode="Markdown")
-            elif text == "👤 Profile":
-                show_profile(chat_id)
-            elif text == "🎯 Demo Quiz":
-                send_demo_quiz(chat_id)
-            elif text == "ℹ️ About":
-                send_telegram_message(chat_id, get_about_message(), parse_mode="Markdown")
-            elif text in ["💳 Donate ₹1", "💳 Donate ₹20"]:
-                create_donation(chat_id)
-            elif text == "💸 Set UPI":
-                set_user_state(chat_id, "awaiting_upi")
-                send_telegram_message(chat_id, "💸 Send your *UPI ID*:\nExample: username@okhdfcbank\n\n*This is required to receive your prize money!*", parse_mode="Markdown")
-            elif text in ["🔓 Start Quiz", "🔒 Start Quiz", "Start Quiz"]:
-                start_quiz(chat_id)
-            else:
-                user_state = get_user_state(chat_id)
-                if user_state == "awaiting_phone":
-                    set_user_data(chat_id, "temp_phone", text)
-                    set_user_state(chat_id, "awaiting_password")
-                    send_telegram_message(chat_id, "📝 Send your *Password* (min 4 chars):", parse_mode="Markdown")
-                elif user_state == "awaiting_password":
-                    complete_registration(chat_id, text)
-                elif user_state == "awaiting_upi":
-                    save_upi(chat_id, text)
-                elif user_state == "awaiting_demo":
-                    handle_demo_answer(chat_id, text)
-                elif user_state == "quiz_active":
-                    handle_quiz_answer(chat_id, text)
-                else:
-                    send_telegram_message(chat_id, "Please use the buttons below.", reply_markup=get_keyboard(chat_id))
+        if update_data and telegram_application:
+            # Process the update
+            update = Update.de_json(update_data, telegram_application.bot)
+            telegram_application.update_queue.put_nowait(update)
+            logger.info(f"✅ Update queued for processing")
         
         return "OK", 200
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"Telegram webhook error: {e}")
         return "Error", 500
 
-# ========== RAZORPAY WEBHOOK ==========
-@web_app.route("/razorpay-webhook", methods=["POST"])
+# ========== RAZORPAY WEBHOOK ROUTE ==========
+@web_app.route("/razorpay-webhook", methods=["POST", "GET"])
 def razorpay_webhook():
+    """Handle Razorpay payment confirmation"""
+    if request.method == "GET":
+        return jsonify({"status": "alive", "message": "Razorpay webhook endpoint is working"}), 200
+    
     try:
         payload = request.get_json()
         logger.info(f"🔔 RAZORPAY WEBHOOK RECEIVED")
@@ -178,10 +153,6 @@ def donation_success():
     </body>
     </html>
     """
-
-@web_app.route("/webhook-test", methods=["GET"])
-def webhook_test():
-    return jsonify({"status": "alive"})
 
 @web_app.route("/")
 def home():
@@ -543,7 +514,6 @@ def send_question(chat_id, index):
                 "date": datetime.now().isoformat(),
                 "status": "Pending"
             }
-            # Check if already in winners list for this quiz
             winners.append(winner_entry)
             save_winners(winners)
             
@@ -554,10 +524,10 @@ def send_question(chat_id, index):
                 reply_markup=get_keyboard(chat_id)
             )
         else:
-            # Failed - wrong answer on first question
+            # Failed - wrong answer
             send_telegram_message(
                 chat_id,
-                f"❌ *Quiz Failed!*\n\nYour score: {score}/{QUESTIONS_PER_QUIZ}\n\n📝 *Try next time by donating ₹{DONATION_AMOUNT//100}.*\n\nClick '💳 Donate ₹{DONATION_AMOUNT//100}' to try another quiz.\n\n🙏 Your donation helps disabled and calamity-hit people.",
+                f"❌ *Quiz Failed!*\n\nYour score: {score}/{QUESTIONS_PER_QUIZ}\n\n📝 *Try next time by donating ₹{DONATION_AMOUNT//100}.*\n\nClick '💳 Donate ₹{DONATION_AMOUNT//100}' to try another quiz with NEW questions!\n\n🙏 Your donation helps disabled and calamity-hit people.",
                 parse_mode="Markdown",
                 reply_markup=get_keyboard(chat_id)
             )
@@ -621,7 +591,7 @@ def handle_quiz_answer(chat_id, answer):
         
         users[str(chat_id)]["quiz_active"] = False
         set_user_state(chat_id, None)
-        save_users(chat_id)
+        save_users(users)  # FIXED: was save_users(chat_id)
         return
 
 # ========== ADMIN COMMANDS ==========
@@ -668,7 +638,7 @@ async def admin_users(update, context):
         return
     
     text = "*📋 Registered Users*\n\n"
-    for uid, user in list(users.items())[:20]:  # Limit to 20
+    for uid, user in list(users.items())[:20]:
         text += f"🆔 `{uid}`\n"
         text += f"   📱 {user.get('phone', 'N/A')}\n"
         text += f"   👤 {user.get('name', 'Not set')}\n"
@@ -692,7 +662,7 @@ async def admin_winners(update, context):
         return
     
     text = "*🏆 Winners List*\n\n"
-    for w in winners:
+    for w in winners[::-1][:20]:  # Show most recent first
         status_emoji = "⏳" if w.get("status") == "Pending" else "✅"
         text += f"{status_emoji} *User:* `{w.get('telegram_id')}`\n"
         text += f"   👤 {w.get('name', 'Unknown')}\n"
@@ -728,10 +698,9 @@ async def mark_paid(update, context):
         save_winners(winners)
         await update.message.reply_text(f"✅ Winner {user_id} marked as PAID!")
         
-        # Notify user
         send_telegram_message(
             int(user_id),
-            "✅ *Prize Payment Completed!* 🎉\n\n🏆 *Jannat Foundation has sent your prize to your UPI ID!*\n\n📅 Payment completed on Sunday as promised.\n\n*JazakAllah Khair for participating!*",
+            "✅ *Prize Payment Completed!* 🎉\n\n🏆 *Jannat Foundation has sent your prize to your UPI ID!*\n\n📅 Payment completed as promised.\n\n*JazakAllah Khair for participating!*",
             parse_mode="Markdown"
         )
     else:
@@ -766,6 +735,8 @@ async def add_question(update, context):
 
 # ========== MAIN ==========
 def main():
+    global telegram_application
+    
     if not TOKEN:
         print("❌ No BOT_TOKEN!")
         return
@@ -785,32 +756,45 @@ def main():
     Thread(target=start_flask, daemon=True).start()
     print("✅ Flask server started")
     
-    # Build Telegram app for admin commands
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("stats", admin_stats))
-    app.add_handler(CommandHandler("admin_users", admin_users))
-    app.add_handler(CommandHandler("admin_winners", admin_winners))
-    app.add_handler(CommandHandler("mark_paid", mark_paid))
-    app.add_handler(CommandHandler("add_question", add_question))
+    # Build Telegram application
+    telegram_application = Application.builder().token(TOKEN).build()
+    
+    # Add admin command handlers
+    telegram_application.add_handler(CommandHandler("stats", admin_stats))
+    telegram_application.add_handler(CommandHandler("admin_users", admin_users))
+    telegram_application.add_handler(CommandHandler("admin_winners", admin_winners))
+    telegram_application.add_handler(CommandHandler("mark_paid", mark_paid))
+    telegram_application.add_handler(CommandHandler("add_question", add_question))
     
     # Set webhook
     webhook_url = "https://jannat-quiz-bot.onrender.com/webhook"
-    import asyncio
-    async def set_webhook():
-        await app.bot.set_webhook(webhook_url)
+    
+    async def setup_webhook():
+        await telegram_application.bot.set_webhook(webhook_url)
         print(f"✅ Webhook set to: {webhook_url}")
+        
+        # Verify webhook
+        webhook_info = await telegram_application.bot.get_webhook_info()
+        print(f"📡 Webhook info: {webhook_info.url}")
     
-    asyncio.run(set_webhook())
+    import asyncio
+    asyncio.run(setup_webhook())
     
+    # Start the application
     print("✅ Bot ready!")
     print("📡 Endpoints:")
     print("   - Telegram webhook: https://jannat-quiz-bot.onrender.com/webhook")
     print("   - Razorpay webhook: https://jannat-quiz-bot.onrender.com/razorpay-webhook")
+    print("   - Webhook test: https://jannat-quiz-bot.onrender.com/webhook-test")
     
-    # Keep main thread alive
-    import time
-    while True:
-        time.sleep(10)
+    # Start the application with polling (for admin commands) and webhook for updates
+    telegram_application.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000)),
+        webhook_url=webhook_url,
+        secret_token=None,
+        drop_pending_updates=True
+    )
 
 if __name__ == "__main__":
     main()
