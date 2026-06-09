@@ -21,7 +21,7 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
 # Quiz settings
 QUESTIONS_PER_QUIZ = 2
-DONATION_AMOUNT = 100  # 100 paise = ₹1
+DONATION_AMOUNT = 100
 
 # Logging
 logging.basicConfig(
@@ -39,7 +39,6 @@ web_app = Flask(__name__)
 # ========== TELEGRAM WEBHOOK ROUTE ==========
 @web_app.route("/webhook", methods=["POST"])
 def telegram_webhook():
-    """Receive updates from Telegram via webhook"""
     try:
         update_data = request.get_json()
         
@@ -50,7 +49,6 @@ def telegram_webhook():
             
             logger.info(f"📱 Message from {chat_id}: {text}")
             
-            # Handle commands
             if text == '/start':
                 send_telegram_message(chat_id, get_start_message())
                 send_keyboard(chat_id)
@@ -63,15 +61,14 @@ def telegram_webhook():
                 send_demo_quiz(chat_id)
             elif text == "ℹ️ About":
                 send_telegram_message(chat_id, get_about_message(), parse_mode="Markdown")
-            elif text == "💳 Donate ₹1":  # CHANGED: Payment to Donation
+            elif text == "💳 Donate ₹1":
                 create_donation(chat_id)
             elif text == "💸 Set UPI":
                 set_user_state(chat_id, "awaiting_upi")
-                send_telegram_message(chat_id, "💸 Send your *UPI ID*:\nExample: username@okhdfcbank\n\n*Required to receive prize!*", parse_mode="Markdown")
+                send_telegram_message(chat_id, "💸 Send your *UPI ID*:\nExample: username@okhdfcbank", parse_mode="Markdown")
             elif text in ["🔓 Start Quiz", "🔒 Start Quiz", "Start Quiz"]:
                 start_quiz(chat_id)
             else:
-                # Handle registration flow
                 user_state = get_user_state(chat_id)
                 if user_state == "awaiting_phone":
                     set_user_data(chat_id, "temp_phone", text)
@@ -96,7 +93,6 @@ def telegram_webhook():
 # ========== RAZORPAY WEBHOOK ROUTE ==========
 @web_app.route("/razorpay-webhook", methods=["POST"])
 def razorpay_webhook():
-    """Handle Razorpay donation confirmation"""
     try:
         payload = request.get_json()
         logger.info(f"🔔 RAZORPAY WEBHOOK RECEIVED")
@@ -132,22 +128,18 @@ def razorpay_webhook():
         return jsonify({"error": str(e)}), 500
 
 def mark_user_donated(telegram_id, amount):
-    """Mark user as donated and send confirmation"""
     users = load_users()
     
     if str(telegram_id) not in users:
         logger.warning(f"User {telegram_id} not found")
         return
     
-    # Update donation stats
     users[str(telegram_id)]["donation_completed"] = True
     users[str(telegram_id)]["total_donations"] = users[str(telegram_id)].get("total_donations", 0) + 1
-    users[str(telegram_id)]["last_donation_date"] = datetime.now().isoformat()
     save_users(users)
     
     logger.info(f"✅ User {telegram_id} marked as donated")
     
-    # Send confirmation with updated keyboard
     keyboard = {
         "keyboard": [
             ["📝 Register", "👤 Profile"],
@@ -183,10 +175,6 @@ def donation_success():
     </html>
     """
 
-@web_app.route("/webhook-test", methods=["GET"])
-def webhook_test():
-    return jsonify({"status": "alive"})
-
 @web_app.route("/")
 def home():
     return "Jannat Foundation Quiz Bot is running!"
@@ -203,7 +191,6 @@ def send_telegram_message(chat_id, text, reply_markup=None, parse_mode="Markdown
         data["reply_markup"] = reply_markup
     try:
         response = requests.post(url, json=data)
-        logger.info(f"Message sent to {chat_id}: {response.status_code}")
         return response.json()
     except Exception as e:
         logger.error(f"Failed to send message: {e}")
@@ -430,7 +417,7 @@ def handle_demo_answer(chat_id, answer):
         if selected == demo.get("correct"):
             send_telegram_message(chat_id, "✅ Correct! Register and donate ₹1 to win ₹1000!", reply_markup=get_keyboard(chat_id))
         else:
-            send_telegram_message(chat_id, f"❌ Wrong! Correct: {demo.get('correct')}\n\nRegister and donate ₹1 to play!", reply_markup=get_keyboard(chat_id))
+            send_telegram_message(chat_id, f"❌ Wrong! Correct: {demo.get('correct')}", reply_markup=get_keyboard(chat_id))
     else:
         send_telegram_message(chat_id, "Please reply with A, B, C, or D")
     
@@ -438,7 +425,6 @@ def handle_demo_answer(chat_id, answer):
 
 # ========== DONATION ==========
 def create_donation(chat_id):
-    """Create Razorpay donation link"""
     users = load_users()
     if str(chat_id) not in users:
         send_telegram_message(chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
@@ -490,14 +476,12 @@ def start_quiz(chat_id):
         )
         return
     
-    # Reset for quiz
     users[str(chat_id)]["donation_completed"] = False
     users[str(chat_id)]["total_attempts"] = user.get("total_attempts", 0) + 1
     users[str(chat_id)]["current_quiz_score"] = 0
     users[str(chat_id)]["quiz_active"] = True
     save_users(users)
     
-    # Get unseen questions
     all_questions = load_questions()
     answered = user.get("answered_questions", [])
     available = [q for q in all_questions if q["id"] not in answered]
@@ -529,11 +513,9 @@ def send_question(chat_id, index):
         score = users[str(chat_id)].get("current_quiz_score", 0)
         
         if score == QUESTIONS_PER_QUIZ:
-            # Winner!
             users[str(chat_id)]["wins"] = users[str(chat_id)].get("wins", 0) + 1
             save_users(users)
             
-            # Add to winners list
             winners = load_winners()
             winners.append({
                 "telegram_id": chat_id,
@@ -548,7 +530,7 @@ def send_question(chat_id, index):
             
             send_telegram_message(
                 chat_id,
-                f"🎉 *CONGRATULATIONS!* 🎉\n\n✅ Score: {score}/{QUESTIONS_PER_QUIZ}\n🎉 You are eligible for the prize!\n\n📄 *Click '💸 Set UPI' to update your UPI ID.*\n\n🏆 *Prize will be sent on Sunday!*\n\n🙏 You can play more by donating another ₹1.",
+                f"🎉 *CONGRATULATIONS!* 🎉\n\n✅ Score: {score}/{QUESTIONS_PER_QUIZ}\n🎉 You are eligible for the prize!\n\n📄 *Click '💸 Set UPI' to update your UPI ID.*\n\n🏆 *Prize will be sent on Sunday!*",
                 parse_mode="Markdown",
                 reply_markup=get_keyboard(chat_id)
             )
@@ -602,7 +584,6 @@ def handle_quiz_answer(chat_id, answer):
         users[str(chat_id)]["current_quiz_score"] = users[str(chat_id)].get("current_quiz_score", 0) + 1
         send_telegram_message(chat_id, "✅ *Correct!* +1 point", parse_mode="Markdown")
         
-        # Add to answered questions
         if q["id"] not in users[str(chat_id)].get("answered_questions", []):
             users[str(chat_id)]["answered_questions"] = users[str(chat_id)].get("answered_questions", []) + [q["id"]]
         
@@ -668,8 +649,7 @@ async def admin_users(update, context):
         text += f"   📍 Place: {u.get('place', 'Not set')}\n"
         text += f"   💸 UPI: {u.get('upi_id', 'Not set')}\n"
         text += f"   💰 Donations: ₹{u.get('total_donations', 0)}\n"
-        text += f"   🏆 Wins: {u.get('wins', 0)}\n"
-        text += f"   📅 Registered: {u.get('registered_on', 'Unknown')[:10]}\n\n"
+        text += f"   🏆 Wins: {u.get('wins', 0)}\n\n"
     
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -720,7 +700,7 @@ async def mark_paid(update, context):
         await update.message.reply_text(f"✅ Winner {user_id} marked as PAID!")
         send_telegram_message(
             int(user_id),
-            "✅ *Prize Payment Completed!* 🎉\n\n🏆 Jannat Foundation has sent your prize to your UPI!\n\n*JazakAllah Khair for participating!*",
+            "✅ *Prize Payment Completed!* 🎉\n\n🏆 Jannat Foundation has sent your prize to your UPI!\n\n*JazakAllah Khair!*",
             parse_mode="Markdown"
         )
     else:
@@ -750,7 +730,7 @@ async def add_question(update, context):
     questions.append(new_q)
     save_questions(questions)
     
-    await update.message.reply_text(f"✅ Question added!\nID: {new_id}\nQuestion: {args[0]}")
+    await update.message.reply_text(f"✅ Question added!\nID: {new_id}")
 
 # ========== MAIN ==========
 def main():
@@ -796,7 +776,7 @@ def main():
     print("   - Telegram webhook: https://jannat-quiz-bot.onrender.com/webhook")
     print("   - Razorpay webhook: https://jannat-quiz-bot.onrender.com/razorpay-webhook")
     
-    # Start webhook server
+    # FIXED: Start webhook server (not infinite loop)
     app.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 10000)),
