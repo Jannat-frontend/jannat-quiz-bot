@@ -59,7 +59,7 @@ def telegram_webhook():
                 send_demo_quiz(chat_id)
             elif text == "ℹ️ About":
                 send_telegram_message(chat_id, get_about_message(), parse_mode="Markdown")
-            elif text == "💳 Pay ₹1":
+            elif text == "💳 Donate ₹1":
                 create_payment(chat_id)
             elif text == "💸 Set UPI":
                 set_user_state(chat_id, "awaiting_upi")
@@ -208,10 +208,10 @@ def send_keyboard(chat_id):
     """Send initial keyboard to user"""
     keyboard = {
         "keyboard": [
-            ["📝 Register", "👤 Profile"],
-            ["🎯 Demo Quiz", "ℹ️ About"],
-            ["💳 Pay ₹1", "💸 Set UPI"],
-            ["🔒 Start Quiz"]
+            ["📝 2 Register", "👤 6 Profile"],
+            ["🎯 1 Demo Quiz", "ℹ️ 7 About"],
+            ["💳 3 Donate ₹1", "💸 5 Set UPI"],
+            ["🔒 4 Start Quiz"]
         ],
         "resize_keyboard": True
     }
@@ -354,7 +354,7 @@ def save_upi(chat_id, upi_id):
         users[str(chat_id)]["upi_id"] = upi_id
         save_users(users)
         set_user_state(chat_id, None)
-        send_telegram_message(chat_id, "✅ UPI saved! Prize on Sunday.", reply_markup=get_keyboard(chat_id))
+        send_telegram_message(chat_id, "✅ UPI saved! Jannat Foundation will distribute the Prize on Sunday.", reply_markup=get_keyboard(chat_id))
 
 # ========== DEMO QUIZ ==========
 def send_demo_quiz(chat_id):
@@ -376,7 +376,7 @@ def handle_demo_answer(chat_id, answer):
     if answer in letter_map:
         selected = demo["options"][letter_map[answer]]
         if selected == demo.get("correct"):
-            send_telegram_message(chat_id, "✅ Correct! Register and pay ₹1 to win ₹1000!", reply_markup=get_keyboard(chat_id))
+            send_telegram_message(chat_id, "✅ Correct! Register and Donate ₹1 to win ₹1000!", reply_markup=get_keyboard(chat_id))
         else:
             send_telegram_message(chat_id, f"❌ Wrong! Correct: {demo.get('correct')}", reply_markup=get_keyboard(chat_id))
     else:
@@ -411,7 +411,7 @@ def create_payment(chat_id):
         
         send_telegram_message(
             chat_id,
-            f"💳 *PAY ₹1 (TEST)*\n\n🔗 [Click here to pay ₹1]({payment_url})\n\n✅ *After Donation, quiz unlocks automatically!*",
+            f"💳 *Donate ₹1 (TEST)*\n\n🔗 [Click here to Donate ₹1]({payment_url})\n\n✅ *After Donation, quiz unlocks automatically!*",
             parse_mode="Markdown",
             reply_markup=get_keyboard(chat_id)
         )
@@ -447,7 +447,7 @@ def start_quiz(chat_id):
         logger.warning(f"User {chat_id} attempted quiz without payment. payment_completed={user.get('payment_completed')}")
         send_telegram_message(
             chat_id, 
-            "❌ *Quiz Locked*\n\nYou need to pay ₹1 first.\n\nClick '💳 Pay ₹1' to continue.",
+            "❌ *Quiz Locked*\n\nYou need to donate ₹1 first.\n\nClick '💳 Donate ₹1' to continue.",
             parse_mode="Markdown",
             reply_markup=get_keyboard(chat_id)
         )
