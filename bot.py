@@ -35,6 +35,7 @@ web_app = Flask(__name__)
 
 # Store active timers
 user_timers = {}
+user_countdowns = {}
 
 # ========== TELEGRAM WEBHOOK ROUTE ==========
 @web_app.route("/webhook", methods=["POST"])
@@ -68,6 +69,8 @@ def telegram_webhook():
                 send_telegram_message(chat_id, "💸 Send your *UPI ID*:\nExample: username@okhdfcbank", parse_mode="Markdown")
             elif text in ["🔓 Start Quiz", "🔒 Start Quiz", "Start Quiz"]:
                 start_quiz(chat_id)
+            elif text == "NEXT":
+                next_question(chat_id)
             elif text.startswith("✏️ Name "):
                 update_profile_field(chat_id, text, "name")
             elif text.startswith("📍 Place "):
@@ -128,7 +131,6 @@ def razorpay_webhook():
         return jsonify({"error": str(e)}), 500
 
 def mark_user_paid(telegram_id, amount):
-    """Mark user as paid"""
     users = load_users()
     telegram_id_str = str(telegram_id)
     
@@ -137,10 +139,10 @@ def mark_user_paid(telegram_id, amount):
         return
     
     users[telegram_id_str]["payment_completed"] = True
+    users[telegram_id_str]["quiz_locked"] = False  # Reset lock
     save_users(users)
     logger.info(f"✅ User {telegram_id_str} marked as paid")
     
-    # Send confirmation with updated keyboard
     keyboard = {
         "keyboard": [
             ["📝 Register", "👤 Profile"],
@@ -356,9 +358,11 @@ def complete_registration(chat_id, password):
         "password": hash_password(password),
         "name": "", "place": "", "email": "", "upi_id": "",
         "payment_completed": False,
+        "quiz_locked": False,
         "current_question_index": 0,
         "current_quiz_score": 0,
         "quiz_active": False,
+        "waiting_next": False,
         "registered": True,
         "registered_on": datetime.now().isoformat()
     }
@@ -445,14 +449,21 @@ def start_quiz(chat_id):
         send_telegram_message(chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
         return
     
-    if not users[str(chat_id)].get("payment_completed"):
+    user = users[str(chat_id)]
+    
+    if not user.get("payment_completed"):
         send_telegram_message(chat_id, "❌ Donate ₹1 first.", reply_markup=get_keyboard(chat_id))
+        return
+    
+    if user.get("quiz_locked"):
+        send_telegram_message(chat_id, "🔒 *Quiz Locked*\n\nYou have already completed the quiz.\n\nDonate ₹1 again to play a new set of questions!", reply_markup=get_keyboard(chat_id))
         return
     
     # Reset quiz
     users[str(chat_id)]["current_question_index"] = 0
     users[str(chat_id)]["current_quiz_score"] = 0
     users[str(chat_id)]["quiz_active"] = True
+    users[str(chat_id)]["waiting_next"] = False
     save_users(users)
     set_user_state(chat_id, "quiz_active")
     
@@ -460,6 +471,11 @@ def start_quiz(chat_id):
     if chat_id in user_timers:
         try:
             user_timers[chat_id].cancel()
+        except:
+            pass
+    if chat_id in user_countdowns:
+        try:
+            user_countdowns[chat_id].cancel()
         except:
             pass
     
@@ -470,30 +486,23 @@ def send_question(chat_id, index):
         users = load_users()
         score = users[str(chat_id)].get("current_quiz_score", 0)
         users[str(chat_id)]["quiz_active"] = False
+        users[str(chat_id)]["quiz_locked"] = True  # Lock after completion
         save_users(users)
         set_user_state(chat_id, None)
         
-        if score == 3:
-            send_telegram_message(
-                chat_id,
-                f"🎉 *PERFECT SCORE!* 🎉\n\nScore: {score}/3\n\nTap '💸 Set UPI' to claim ₹1000!",
-                parse_mode="Markdown",
-                reply_markup=get_keyboard(chat_id)
-            )
-        else:
-            send_telegram_message(
-                chat_id,
-                f"📊 *Quiz Completed!*\n\nScore: {score}/3",
-                parse_mode="Markdown",
-                reply_markup=get_keyboard(chat_id)
-            )
+        send_telegram_message(
+            chat_id,
+            f"🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Set UPI' to claim ₹1000!\n\n*Donate ₹1 again to play a new quiz!*",
+            parse_mode="Markdown",
+            reply_markup=get_keyboard(chat_id)
+        )
         return
     
     q = QUIZ_QUESTIONS[index]
     set_user_data(chat_id, "current_q", q)
     set_user_data(chat_id, "current_q_index", index)
     
-    text = f"🎯 *Question {index+1}/3* ⏱️ 7 sec\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
+    text = f"🎯 *Question {index+1}/3* ⏱️ *7 seconds*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
     send_telegram_message(chat_id, text, parse_mode="Markdown")
     
     # Cancel existing timer
@@ -506,10 +515,20 @@ def send_question(chat_id, index):
     # Create timer
     async def time_out():
         await asyncio.sleep(7)
-        current_q = get_user_data(chat_id, "current_q")
-        if current_q and current_q.get("id") == q.get("id"):
-            send_telegram_message(chat_id, "⏰ Time's up! Next question.", parse_mode="Markdown")
-            send_question(chat_id, index + 1)
+        users = load_users()
+        if users.get(str(chat_id), {}).get("quiz_active") and not users.get(str(chat_id), {}).get("waiting_next"):
+            # Time's up - end quiz
+            users[str(chat_id)]["quiz_active"] = False
+            users[str(chat_id)]["quiz_locked"] = True
+            save_users(users)
+            set_user_state(chat_id, None)
+            
+            send_telegram_message(
+                chat_id,
+                "⏰ *Time's Up!*\n\nYou didn't answer in time.\n\n💳 *Donate ₹1 to try again!*",
+                parse_mode="Markdown",
+                reply_markup=get_keyboard(chat_id)
+            )
             if chat_id in user_timers:
                 del user_timers[chat_id]
     
@@ -520,6 +539,9 @@ def handle_quiz_answer(chat_id, answer):
     users = load_users()
     
     if not users.get(str(chat_id), {}).get("quiz_active"):
+        return
+    if users.get(str(chat_id), {}).get("waiting_next"):
+        send_telegram_message(chat_id, "Press 'NEXT' for next question.")
         return
     
     # Cancel timer
@@ -544,16 +566,65 @@ def handle_quiz_answer(chat_id, answer):
         return
     
     selected = q["options"][letter_map[answer]]
-    is_correct = (selected == q.get("correct"))
     
-    if is_correct:
+    if selected == q.get("correct"):
         users[str(chat_id)]["current_quiz_score"] = users[str(chat_id)].get("current_quiz_score", 0) + 1
-        send_telegram_message(chat_id, "✅ Correct! +1 point", parse_mode="Markdown")
+        users[str(chat_id)]["waiting_next"] = True
+        save_users(users)
+        
+        # Check if this was the last question
+        if q_index + 1 >= len(QUIZ_QUESTIONS):
+            # Last question answered correctly - complete quiz
+            users[str(chat_id)]["quiz_active"] = False
+            users[str(chat_id)]["quiz_locked"] = True
+            save_users(users)
+            set_user_state(chat_id, None)
+            
+            score = users[str(chat_id)]["current_quiz_score"]
+            send_telegram_message(
+                chat_id,
+                f"✅ *Correct!*\n\n🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Set UPI' to claim ₹1000!\n\n*Donate ₹1 again to play a new quiz!*",
+                parse_mode="Markdown",
+                reply_markup=get_keyboard(chat_id)
+            )
+        else:
+            # Not last question - show NEXT button
+            next_keyboard = {"keyboard": [["NEXT"]], "resize_keyboard": True}
+            send_telegram_message(
+                chat_id,
+                f"✅ *Correct!*\n\nPress NEXT for Question {q_index + 2}",
+                reply_markup=next_keyboard
+            )
     else:
-        send_telegram_message(chat_id, f"❌ Wrong! Correct: {q.get('correct')}", parse_mode="Markdown")
+        # Wrong answer - end quiz
+        users[str(chat_id)]["quiz_active"] = False
+        users[str(chat_id)]["quiz_locked"] = True
+        save_users(users)
+        set_user_state(chat_id, None)
+        
+        send_telegram_message(
+            chat_id,
+            "❌ *Wrong Answer!*\n\n💳 *Try next time by donating ₹1*",
+            parse_mode="Markdown",
+            reply_markup=get_keyboard(chat_id)
+        )
+
+def next_question(chat_id):
+    users = load_users()
     
+    if str(chat_id) not in users:
+        return
+    if not users[str(chat_id)].get("waiting_next"):
+        send_telegram_message(chat_id, "Answer the current question first!")
+        return
+    
+    users[str(chat_id)]["waiting_next"] = False
+    current_index = users[str(chat_id)].get("current_question_index", 0)
+    current_index += 1
+    users[str(chat_id)]["current_question_index"] = current_index
     save_users(users)
-    send_question(chat_id, q_index + 1)
+    
+    send_question(chat_id, current_index)
 
 # ========== ADMIN COMMANDS ==========
 async def admin_stats(update, context):
@@ -579,6 +650,7 @@ async def admin_verify(update, context):
         await update.message.reply_text(f"User {user_id} not found.")
         return
     users[user_id]["payment_completed"] = True
+    users[user_id]["quiz_locked"] = False
     save_users(users)
     await update.message.reply_text(f"✅ Verified user {user_id}!")
     mark_user_paid(int(user_id), 1.0)
