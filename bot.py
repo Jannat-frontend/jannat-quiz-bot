@@ -4,6 +4,7 @@ import logging
 import hashlib
 import random
 import requests
+import asyncio
 from datetime import datetime
 from threading import Thread
 
@@ -31,6 +32,9 @@ razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 # ========== FLASK WEBHOOK ==========
 web_app = Flask(__name__)
+
+# Store active timers per user
+user_timers = {}
 
 # ========== TELEGRAM WEBHOOK ROUTE ==========
 @web_app.route("/webhook", methods=["POST"])
@@ -66,6 +70,12 @@ def telegram_webhook():
                 send_telegram_message(chat_id, "💸 Send your *UPI ID*:\nExample: username@okhdfcbank", parse_mode="Markdown")
             elif text in ["🔓 Start Quiz", "🔒 Start Quiz", "Start Quiz"]:
                 start_quiz(chat_id)
+            elif text.startswith("✏️ Name "):
+                update_profile_field(chat_id, text, "name")
+            elif text.startswith("📍 Place "):
+                update_profile_field(chat_id, text, "place")
+            elif text.startswith("📧 Email "):
+                update_profile_field(chat_id, text, "email")
             else:
                 # Handle registration flow
                 user_state = get_user_state(chat_id)
@@ -244,7 +254,7 @@ def get_start_message():
 *How it works:*
 1️⃣ Register
 2️⃣ Donate ₹1 (TEST)
-3️⃣ Answer 3 questions
+3️⃣ Answer 3 questions (7 seconds each)
 4️⃣ Submit UPI
 5️⃣ Get ₹1000 on Sunday!
 
@@ -256,7 +266,7 @@ def get_about_message():
 📖 *Jannat Foundation Quiz*
 
 💰 Prize: ₹1000
-🎯 3 Questions
+🎯 3 Questions (7 seconds each)
 📅 Payout: Sunday
 
 *Donation:* ₹1 unlocks the quiz
@@ -264,9 +274,9 @@ def get_about_message():
 *Contact:* @imtiazs37
 """
 
-# ========== DATA FUNCTIONS WITH PERSISTENT STORAGE ==========
+# ========== DATA FUNCTIONS ==========
 def load_users():
-    """Load users from JSON file - persists across redeploys"""
+    """Load users from JSON file"""
     if os.path.exists("users.json"):
         try:
             with open("users.json", 'r', encoding='utf-8') as f:
@@ -327,12 +337,37 @@ def show_profile(chat_id):
 💰 Donated: {'✅ Yes' if u.get('payment_completed') else '❌ No'}
 🏆 Score: {u.get('current_quiz_score', 0)}/3
 
-*To update your details:*
-Send: ✏️ Name YourName
-Send: 📍 Place YourCity
-Send: 📧 Email your@email.com
+*To update your details send:*
+✏️ Name YourName
+📍 Place YourCity
+📧 Email your@email.com
 """
     send_telegram_message(chat_id, text, parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
+
+def update_profile_field(chat_id, text, field):
+    """Update profile field from message"""
+    users = load_users()
+    if str(chat_id) not in users:
+        send_telegram_message(chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
+        return
+    
+    # Extract value after emoji and space
+    parts = text.split(" ", 1)
+    if len(parts) < 2:
+        send_telegram_message(chat_id, f"❌ Usage: {parts[0]} YourValue", reply_markup=get_keyboard(chat_id))
+        return
+    
+    value = parts[1].strip()
+    
+    field_names = {
+        "name": "Name",
+        "place": "Place", 
+        "email": "Email"
+    }
+    
+    users[str(chat_id)][field] = value
+    save_users(users)
+    send_telegram_message(chat_id, f"✅ {field_names[field]} updated to: {value}", reply_markup=get_keyboard(chat_id))
 
 # ========== REGISTRATION ==========
 def complete_registration(chat_id, password):
@@ -362,29 +397,6 @@ def complete_registration(chat_id, password):
     set_user_state(chat_id, None)
     
     send_telegram_message(chat_id, "✅ *Registration Successful!*", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
-
-# ========== UPDATE PROFILE ==========
-def update_profile_field(chat_id, text):
-    """Handle profile updates like '✏️ Name John'"""
-    users = load_users()
-    if str(chat_id) not in users:
-        return
-    
-    if text.startswith("✏️ Name "):
-        name = text.replace("✏️ Name ", "").strip()
-        users[str(chat_id)]["name"] = name
-        save_users(users)
-        send_telegram_message(chat_id, f"✅ Name updated to: {name}", reply_markup=get_keyboard(chat_id))
-    elif text.startswith("📍 Place "):
-        place = text.replace("📍 Place ", "").strip()
-        users[str(chat_id)]["place"] = place
-        save_users(users)
-        send_telegram_message(chat_id, f"✅ Place updated to: {place}", reply_markup=get_keyboard(chat_id))
-    elif text.startswith("📧 Email "):
-        email = text.replace("📧 Email ", "").strip()
-        users[str(chat_id)]["email"] = email
-        save_users(users)
-        send_telegram_message(chat_id, f"✅ Email updated to: {email}", reply_markup=get_keyboard(chat_id))
 
 # ========== UPI ==========
 def save_upi(chat_id, upi_id):
@@ -450,7 +462,7 @@ def create_payment(chat_id):
         
         send_telegram_message(
             chat_id,
-            f"💳 *Donate ₹1 (TEST)*\n\n🔗 [Click here to Donate ₹1]({payment_url})\n\n✅ *After donation, quiz unlocks automatically!*",
+            f"💳 *Donate ₹1 (TEST)*\n\n🔗 [Click here to Donate ₹1]({payment_url})\n\n✅ *After donation, quiz unlocks automatically!*\n\n⚠️ *You have 7 seconds per question!*",
             parse_mode="Markdown",
             reply_markup=get_keyboard(chat_id)
         )
@@ -464,7 +476,7 @@ def create_payment(chat_id):
             reply_markup=get_keyboard(chat_id)
         )
 
-# ========== QUIZ ==========
+# ========== QUIZ WITH 7-SECOND TIMER ==========
 QUIZ_QUESTIONS = [
     {"id": "Q1", "text": "What is the capital of India?", "options": ["Mumbai", "New Delhi", "Kolkata", "Chennai"], "correct": "New Delhi"},
     {"id": "Q2", "text": "Who wrote the Indian national anthem?", "options": ["Bankim Chandra Chattopadhyay", "Rabindranath Tagore", "Sarojini Naidu", "Mahatma Gandhi"], "correct": "Rabindranath Tagore"},
@@ -481,7 +493,6 @@ def start_quiz(chat_id):
     
     user = users[str(chat_id)]
     
-    # Check if donation is completed
     if not user.get("payment_completed"):
         logger.warning(f"User {chat_id} attempted quiz without donation")
         send_telegram_message(
@@ -492,19 +503,21 @@ def start_quiz(chat_id):
         )
         return
     
-    # Donation verified - start quiz
-    logger.info(f"✅ Starting quiz for user {chat_id}")
-    
+    # Reset quiz progress
     users[str(chat_id)]["current_question_index"] = 0
     users[str(chat_id)]["current_quiz_score"] = 0
     users[str(chat_id)]["quiz_active"] = True
     save_users(users)
     set_user_state(chat_id, "quiz_active")
     
+    # Cancel any existing timer
+    if chat_id in user_timers:
+        user_timers[chat_id].cancel()
+    
     send_question(chat_id, 0)
 
 def send_question(chat_id, index):
-    """Send a quiz question"""
+    """Send a quiz question with 7-second timer"""
     if index >= len(QUIZ_QUESTIONS):
         users = load_users()
         score = users[str(chat_id)].get("current_quiz_score", 0)
@@ -532,15 +545,45 @@ def send_question(chat_id, index):
     set_user_data(chat_id, "current_q", q)
     set_user_data(chat_id, "current_q_index", index)
     
-    text = f"🎯 *Question {index+1}/3*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply with A, B, C, or D*"
+    text = f"🎯 *Question {index+1}/3* ⏱️ *7 seconds remaining*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply with A, B, C, or D (7 seconds!)*"
     send_telegram_message(chat_id, text, parse_mode="Markdown")
+    
+    # Cancel existing timer for this user
+    if chat_id in user_timers:
+        try:
+            user_timers[chat_id].cancel()
+        except:
+            pass
+    
+    # Create new 7-second timer
+    async def time_out():
+        await asyncio.sleep(7)
+        # Check if user is still on this question
+        current_q = get_user_data(chat_id, "current_q")
+        current_index = get_user_data(chat_id, "current_q_index")
+        if current_q and current_index == index:
+            send_telegram_message(chat_id, "⏰ *Time's up!* Moving to next question...", parse_mode="Markdown")
+            send_question(chat_id, index + 1)
+            if chat_id in user_timers:
+                del user_timers[chat_id]
+    
+    timer_task = asyncio.create_task(time_out())
+    user_timers[chat_id] = timer_task
 
 def handle_quiz_answer(chat_id, answer):
-    """Handle quiz answer"""
+    """Handle quiz answer - cancel timer if answer given"""
     users = load_users()
     
     if not users.get(str(chat_id), {}).get("quiz_active"):
         return
+    
+    # Cancel timer if user answered
+    if chat_id in user_timers:
+        try:
+            user_timers[chat_id].cancel()
+            del user_timers[chat_id]
+        except:
+            pass
     
     q = get_user_data(chat_id, "current_q")
     q_index = get_user_data(chat_id, "current_q_index")
@@ -624,6 +667,39 @@ async def admin_broadcast(update, context):
             pass
     await update.message.reply_text(f"✅ Broadcast sent to {sent} users")
 
+async def admin_export(update, context):
+    """Export users.json as a downloadable file"""
+    chat_id = update.effective_user.id
+    if chat_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Not authorized.")
+        return
+    
+    if os.path.exists("users.json"):
+        with open("users.json", 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        await update.message.reply_document(
+            document=open("users.json", 'rb'),
+            filename="users.json",
+            caption=f"📊 User Data Export\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n👥 Total Users: {len(data)}"
+        )
+    else:
+        await update.message.reply_text("No data file found.")
+
+async def admin_import(update, context):
+    """Import users.json from uploaded file"""
+    chat_id = update.effective_user.id
+    if chat_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Not authorized.")
+        return
+    
+    if update.message.document:
+        file = await update.message.document.get_file()
+        await file.download_to_drive("users.json")
+        await update.message.reply_text("✅ Data imported successfully!")
+    else:
+        await update.message.reply_text("❌ Please send a users.json file with this command.")
+
 # ========== MAIN ==========
 def main():
     if not TOKEN:
@@ -647,10 +723,12 @@ def main():
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(CommandHandler("verify", admin_verify))
     app.add_handler(CommandHandler("broadcast", admin_broadcast))
+    app.add_handler(CommandHandler("export", admin_export))
+    app.add_handler(CommandHandler("import", admin_import))
     
     # Set webhook
     webhook_url = "https://jannat-quiz-bot.onrender.com/webhook"
-    import asyncio
+    
     async def set_webhook():
         await app.bot.set_webhook(webhook_url)
         print(f"✅ Webhook set to: {webhook_url}")
@@ -661,6 +739,12 @@ def main():
     print("📡 Endpoints:")
     print("   - Telegram webhook: https://jannat-quiz-bot.onrender.com/webhook")
     print("   - Razorpay webhook: https://jannat-quiz-bot.onrender.com/razorpay-webhook")
+    print("\n📋 Admin Commands:")
+    print("   /stats - View statistics")
+    print("   /verify USER_ID - Manually verify user")
+    print("   /broadcast message - Send to all users")
+    print("   /export - Download users.json")
+    print("   /import - Upload users.json (reply to file)")
     
     # Keep main thread alive
     import time
