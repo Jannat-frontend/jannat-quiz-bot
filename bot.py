@@ -244,7 +244,7 @@ def get_start_message():
 
 *How it works:*
 1️⃣ Register
-2️⃣ Pay ₹1 (TEST)
+2️⃣ Donate ₹1
 3️⃣ Answer 3 questions
 4️⃣ Submit UPI
 5️⃣ Get ₹1000 on Sunday!
