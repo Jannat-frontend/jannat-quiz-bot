@@ -167,7 +167,7 @@ def payment_success():
     <html>
     <head><title>Payment Received</title></head>
     <body style="font-family: Arial; text-align: center; padding: 50px;">
-        <h1>✅ Payment Received!</h1>
+        <h1>✅ Donation Received!</h1>
         <h2>Your quiz is being unlocked...</h2>
         <p>Please return to Telegram and press <strong>Start Quiz</strong>.</p>
         <p>You will receive a confirmation message shortly.</p>
@@ -411,7 +411,7 @@ def create_payment(chat_id):
         
         send_telegram_message(
             chat_id,
-            f"💳 *PAY ₹1 (TEST)*\n\n🔗 [Click here to pay ₹1]({payment_url})\n\n✅ *After payment, quiz unlocks automatically!*",
+            f"💳 *PAY ₹1 (TEST)*\n\n🔗 [Click here to pay ₹1]({payment_url})\n\n✅ *After Donation, quiz unlocks automatically!*",
             parse_mode="Markdown",
             reply_markup=get_keyboard(chat_id)
         )
@@ -453,7 +453,7 @@ def start_quiz(chat_id):
         )
         return
     
-    # Payment verified - start quiz
+    # Donation verified - start quiz
     logger.info(f"✅ Starting quiz for user {chat_id}")
     
     users[str(chat_id)]["current_question_index"] = 0
