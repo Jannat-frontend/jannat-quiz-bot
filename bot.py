@@ -301,6 +301,33 @@ def set_user_data(chat_id, key, value):
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
+# ========== PROFILE COMPLETION CHECK ==========
+def profile_complete(chat_id):
+    users = load_users()
+    user = users.get(str(chat_id), {})
+    
+    if not user.get("name"):
+        return False
+    if not user.get("place"):
+        return False
+    if not user.get("upi_id"):
+        return False
+    return True
+
+def get_missing_fields(chat_id):
+    users = load_users()
+    user = users.get(str(chat_id), {})
+    missing = []
+    
+    if not user.get("name"):
+        missing.append("✏️ Name YourName")
+    if not user.get("place"):
+        missing.append("📍 Place YourCity")
+    if not user.get("upi_id"):
+        missing.append("💸 Set UPI (use the button)")
+    
+    return missing
+
 # ========== PROFILE ==========
 def show_profile(chat_id):
     users = load_users()
@@ -382,7 +409,12 @@ def save_upi(chat_id, upi_id):
         users[str(chat_id)]["upi_id"] = upi_id
         save_users(users)
         set_user_state(chat_id, None)
-        send_telegram_message(chat_id, "✅ UPI saved! Prize on Sunday.", reply_markup=get_keyboard(chat_id))
+        send_telegram_message(
+            chat_id, 
+            "✅ *UPI Saved!* \n\n🏆 *Jannat Foundation will pay your prize on Sunday.*", 
+            parse_mode="Markdown", 
+            reply_markup=get_keyboard(chat_id)
+        )
 
 # ========== DEMO QUIZ ==========
 def send_demo_quiz(chat_id):
@@ -390,7 +422,7 @@ def send_demo_quiz(chat_id):
     set_user_data(chat_id, "demo_q", demo)
     set_user_state(chat_id, "awaiting_demo")
     
-    text = f"🎯 *DEMO QUIZ*\n\n{demo['question']}\n\nA. London\nB. Berlin\nC. Paris\nD. Madrid\n\n*Reply with A, B, C, or D*"
+    text = f"🎯 *DEMO QUIZ* ⏱️ *15 seconds*\n\n{demo['question']}\n\nA. London\nB. Berlin\nC. Paris\nD. Madrid\n\n*Reply A, B, C, or D*"
     send_telegram_message(chat_id, text, parse_mode="Markdown")
 
 def handle_demo_answer(chat_id, answer):
@@ -483,12 +515,23 @@ def send_question(chat_id, index):
         save_users(users)
         set_user_state(chat_id, None)
         
-        send_telegram_message(
-            chat_id,
-            f"🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Update your UPI' to claim ₹1000. Jannat Foundation will pay the prize on Sunday!\n\n*Donate ₹1 again to play a new quiz!*",
-            parse_mode="Markdown",
-            reply_markup=get_keyboard(chat_id)
-        )
+        # Check if profile is complete before showing prize message
+        if not profile_complete(chat_id):
+            missing_fields = get_missing_fields(chat_id)
+            missing_text = "\n".join(missing_fields)
+            send_telegram_message(
+                chat_id,
+                f"🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n⚠️ *Before claiming your prize, please complete:*\n\n{missing_text}\n\nUse the Profile button to update your details.",
+                parse_mode="Markdown",
+                reply_markup=get_keyboard(chat_id)
+            )
+        else:
+            send_telegram_message(
+                chat_id,
+                f"🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Set UPI' to claim ₹1000!\n\n❤️ *Jannat Foundation will pay your prize on Sunday.*\n\n*Donate ₹1 again to play a new quiz!*",
+                parse_mode="Markdown",
+                reply_markup=get_keyboard(chat_id)
+            )
         return
     
     q = QUIZ_QUESTIONS[index]
@@ -498,6 +541,7 @@ def send_question(chat_id, index):
     # Store start time for 15-second timer
     set_user_data(chat_id, "question_start_time", int(datetime.now().timestamp()))
     
+    # Updated question text with 15 seconds countdown
     text = f"🎯 *Question {index+1}/3* ⏱️ *15 seconds*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
     send_telegram_message(chat_id, text, parse_mode="Markdown")
 
@@ -557,18 +601,37 @@ def handle_quiz_answer(chat_id, answer):
             set_user_state(chat_id, None)
             
             score = users[str(chat_id)]["current_quiz_score"]
-            send_telegram_message(
-                chat_id,
-                f"✅ *Correct!*\n\n🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Set UPI' to claim ₹1000!\n\n*Donate ₹1 again to play a new quiz!*",
-                parse_mode="Markdown",
-                reply_markup=get_keyboard(chat_id)
-            )
+            
+            # Check if profile is complete
+            if not profile_complete(chat_id):
+                missing_fields = get_missing_fields(chat_id)
+                missing_text = "\n".join(missing_fields)
+                send_telegram_message(
+                    chat_id,
+                    f"✅ *Correct!*\n\n🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n⚠️ *Before claiming your prize, please complete:*\n\n{missing_text}\n\nUse the Profile button to update your details.",
+                    parse_mode="Markdown",
+                    reply_markup=get_keyboard(chat_id)
+                )
+            else:
+                send_telegram_message(
+                    chat_id,
+                    f"✅ *Correct!*\n\n🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Set UPI' to claim ₹1000!\n\n❤️ *Jannat Foundation will pay your prize on Sunday.*\n\n*Donate ₹1 again to play a new quiz!*",
+                    parse_mode="Markdown",
+                    reply_markup=get_keyboard(chat_id)
+                )
         else:
-            # Not last question - show NEXT button
+            # Not last question - show NEXT button with missing fields reminder
+            missing = get_missing_fields(chat_id)
+            msg = f"✅ *Correct!*\n\nPress 'NEXT' for Question {q_index + 2}"
+            
+            if missing:
+                msg += "\n\n📝 *Please update these details after the quiz:*\n" + "\n".join(missing)
+                msg += "\n\nUse the Profile button to update."
+            
             next_keyboard = {"keyboard": [["NEXT"]], "resize_keyboard": True}
             send_telegram_message(
                 chat_id,
-                f"✅ *Correct!*\n\nPress 'NEXT' for Question {q_index + 2}",
+                msg,
                 reply_markup=next_keyboard
             )
     else:
