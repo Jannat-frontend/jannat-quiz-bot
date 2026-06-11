@@ -243,7 +243,7 @@ def get_start_message():
 *How it works:*
 1️⃣ Register
 2️⃣ Donate ₹1
-3️⃣ Answer 3 questions (7 seconds each)
+3️⃣ Answer 3 questions (15 seconds each)
 4️⃣ Submit UPI
 5️⃣ Get ₹1000 on Sunday!
 """
@@ -253,7 +253,7 @@ def get_about_message():
 📖 *Jannat Foundation Quiz*
 
 💰 Prize: ₹1000
-🎯 3 Questions (7 seconds each)
+🎯 3 Questions (15 seconds each)
 📅 Payout: Sunday
 
 Contact: @imtiazs37
@@ -495,10 +495,10 @@ def send_question(chat_id, index):
     set_user_data(chat_id, "current_q", q)
     set_user_data(chat_id, "current_q_index", index)
     
-    # Store start time for 7-second timer
+    # Store start time for 15-second timer
     set_user_data(chat_id, "question_start_time", int(datetime.now().timestamp()))
     
-    text = f"🎯 *Question {index+1}/3* ⏱️ *7 seconds*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
+    text = f"🎯 *Question {index+1}/3* ⏱️ *15 seconds*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
     send_telegram_message(chat_id, text, parse_mode="Markdown")
 
 def handle_quiz_answer(chat_id, answer):
@@ -510,11 +510,11 @@ def handle_quiz_answer(chat_id, answer):
         send_telegram_message(chat_id, "Press 'NEXT' for next question.")
         return
     
-    # Check 7-second timeout
+    # Check 15-second timeout
     question_start = get_user_data(chat_id, "question_start_time")
     if question_start:
         now = int(datetime.now().timestamp())
-        if now - question_start > 7:
+        if now - question_start > 15:
             users[str(chat_id)]["quiz_active"] = False
             users[str(chat_id)]["quiz_locked"] = True
             save_users(users)
