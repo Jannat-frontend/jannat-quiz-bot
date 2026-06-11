@@ -485,7 +485,7 @@ def send_question(chat_id, index):
         
         send_telegram_message(
             chat_id,
-            f"🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Set UPI' to claim ₹1000!\n\n*Donate ₹1 again to play a new quiz!*",
+            f"🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Update your UPI' to claim ₹1000. Jannat Foundation will pay the prize on Sunday!\n\n*Donate ₹1 again to play a new quiz!*",
             parse_mode="Markdown",
             reply_markup=get_keyboard(chat_id)
         )
