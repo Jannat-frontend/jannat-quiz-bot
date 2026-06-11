@@ -4,6 +4,7 @@ import logging
 import hashlib
 import random
 import requests
+import asyncio
 from datetime import datetime
 from threading import Thread
 
@@ -22,6 +23,9 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 # Maintenance mode
 BOT_MAINTENANCE = False
 
+# Store active countdown tasks
+active_countdowns = {}
+
 # Logging
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -34,6 +38,48 @@ razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 # ========== FLASK WEBHOOK ==========
 web_app = Flask(__name__)
+
+# ========== AUTO BACKUP FUNCTION ==========
+def auto_backup_users():
+    """Automatically backup users.json to local file on every change"""
+    try:
+        if os.path.exists("users.json"):
+            # Create backup folder if not exists
+            backup_dir = "backups"
+            if not os.path.exists(backup_dir):
+                os.makedirs(backup_dir)
+            
+            # Create backup with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = f"{backup_dir}/users_backup_{timestamp}.json"
+            
+            # Copy file
+            with open("users.json", 'r', encoding='utf-8') as src:
+                with open(backup_file, 'w', encoding='utf-8') as dst:
+                    dst.write(src.read())
+            
+            # Keep only last 10 backups
+            backups = sorted([f for f in os.listdir(backup_dir) if f.startswith("users_backup_")])
+            for old_backup in backups[:-10]:
+                os.remove(os.path.join(backup_dir, old_backup))
+            
+            logger.info(f"✅ Auto-backup created: {backup_file}")
+    except Exception as e:
+        logger.error(f"Auto-backup failed: {e}")
+
+# ========== LIVE COUNTDOWN FUNCTION ==========
+async def send_live_countdown(chat_id, message_id, seconds):
+    """Send live countdown updates every second"""
+    for remaining in range(seconds, 0, -1):
+        try:
+            edit_text = f"🎯 *Question in progress* ⏱️ *{remaining} seconds remaining*\n\nAnswer quickly!"
+            await asyncio.sleep(1)
+            
+            # Check if countdown was cancelled
+            if chat_id in active_countdowns and not active_countdowns[chat_id]:
+                break
+        except:
+            break
 
 # ========== TELEGRAM WEBHOOK ROUTE ==========
 @web_app.route("/webhook", methods=["POST"])
@@ -146,6 +192,7 @@ def mark_user_paid(telegram_id, amount):
     users[telegram_id_str]["payment_completed"] = True
     users[telegram_id_str]["quiz_locked"] = False
     save_users(users)
+    auto_backup_users()  # Auto backup after change
     logger.info(f"✅ User {telegram_id_str} marked as paid")
     
     keyboard = {
@@ -273,6 +320,8 @@ def save_users(users):
     try:
         with open("users.json", 'w', encoding='utf-8') as f:
             json.dump(users, f, indent=2, ensure_ascii=False)
+        # Auto backup after every save
+        auto_backup_users()
     except Exception as e:
         logger.error(f"Failed to save: {e}")
 
@@ -411,7 +460,7 @@ def save_upi(chat_id, upi_id):
         set_user_state(chat_id, None)
         send_telegram_message(
             chat_id, 
-            "✅ *UPI Saved!* \n\n🏆 *Jannat Foundation will pay your prize on Sunday.*", 
+            "✅ *UPI Saved!* 💰 ₹1000\n\n❤️ *Jannat Foundation will pay your prize on Sunday.*", 
             parse_mode="Markdown", 
             reply_markup=get_keyboard(chat_id)
         )
@@ -541,8 +590,25 @@ def send_question(chat_id, index):
     # Store start time for 15-second timer
     set_user_data(chat_id, "question_start_time", int(datetime.now().timestamp()))
     
+    # Start live countdown in separate thread
+    async def start_countdown():
+        for remaining in range(15, 0, -1):
+            if not users.get(str(chat_id), {}).get("quiz_active"):
+                break
+            # Send countdown update (edits the message - simpler to just send new messages)
+            if remaining in [15, 10, 5, 3, 2, 1]:
+                send_telegram_message(
+                    chat_id, 
+                    f"⏰ *Time remaining: {remaining} seconds* to answer Question {index+1}/3!",
+                    parse_mode="Markdown"
+                )
+            await asyncio.sleep(1)
+    
+    # Run countdown in background
+    asyncio.create_task(start_countdown())
+    
     # Updated question text with 15 seconds countdown
-    text = f"🎯 *Question {index+1}/3* ⏱️ *15 seconds*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
+    text = f"🎯 *Question {index+1}/3* ⏱️ *15 seconds remaining*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
     send_telegram_message(chat_id, text, parse_mode="Markdown")
 
 def handle_quiz_answer(chat_id, answer):
@@ -625,7 +691,7 @@ def handle_quiz_answer(chat_id, answer):
             msg = f"✅ *Correct!*\n\nPress 'NEXT' for Question {q_index + 2}"
             
             if missing:
-                msg += "\n\n📝 *Please update these details after the quiz:*\n" + "\n".join(missing)
+                msg += "\n\n📝 *Please update these details:*\n" + "\n".join(missing)
                 msg += "\n\nUse the Profile button to update."
             
             next_keyboard = {"keyboard": [["NEXT"]], "resize_keyboard": True}
@@ -739,6 +805,42 @@ async def start_bot(update, context):
     BOT_MAINTENANCE = False
     await update.message.reply_text("✅ *Quiz Active Again*\n\nUsers can now play.", parse_mode="Markdown")
 
+async def admin_winners(update, context):
+    """Show winners panel - users who scored 3/3"""
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Not authorized.")
+        return
+    
+    users = load_users()
+    winners = []
+    
+    for uid, user in users.items():
+        if user.get("current_quiz_score", 0) == 3 and user.get("payment_completed"):
+            winners.append({
+                "id": uid,
+                "name": user.get("name", "Not set"),
+                "place": user.get("place", "Not set"),
+                "upi": user.get("upi_id", "Not set"),
+                "score": user.get("current_quiz_score", 0),
+                "date": user.get("registered_on", "Unknown")[:10]
+            })
+    
+    if not winners:
+        await update.message.reply_text("No winners yet.")
+        return
+    
+    winner_text = "🏆 *WINNERS PANEL* 🏆\n\n"
+    for w in winners:
+        winner_text += f"👤 *{w['name']}*\n"
+        winner_text += f"📍 {w['place']}\n"
+        winner_text += f"💸 UPI: `{w['upi']}`\n"
+        winner_text += f"🆔 ID: {w['id']}\n"
+        winner_text += f"📅 Date: {w['date']}\n"
+        winner_text += f"⭐ Score: {w['score']}/3\n"
+        winner_text += "─" * 20 + "\n"
+    
+    await update.message.reply_text(winner_text, parse_mode="Markdown")
+
 # ========== MAIN ==========
 def main():
     if not TOKEN:
@@ -750,6 +852,10 @@ def main():
     if not os.path.exists("users.json"):
         save_users({})
     
+    # Create backups folder
+    if not os.path.exists("backups"):
+        os.makedirs("backups")
+    
     Thread(target=start_flask, daemon=True).start()
     print("✅ Flask started")
     
@@ -760,6 +866,7 @@ def main():
     app.add_handler(CommandHandler("export", admin_export))
     app.add_handler(CommandHandler("stopbot", stop_bot))
     app.add_handler(CommandHandler("startbot", start_bot))
+    app.add_handler(CommandHandler("winners", admin_winners))
     
     webhook_url = "https://jannat-quiz-bot.onrender.com/webhook"
     
@@ -777,6 +884,7 @@ def main():
     print("   /export - Download users.json")
     print("   /stopbot - Enable maintenance mode")
     print("   /startbot - Disable maintenance mode")
+    print("   /winners - Show winners panel")
     
     import time
     while True:
