@@ -5,17 +5,21 @@ import hashlib
 import random
 import requests
 import asyncio
+import shutil
 from datetime import datetime
 from threading import Thread
 
 from flask import Flask, request, jsonify
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 import razorpay
 
 # ========== CONFIGURATION ==========
-TOKEN = os.environ.get("BOT_TOKEN")
+# Main Bot Token (your existing bot)
+MAIN_BOT_TOKEN = os.environ.get("BOT_TOKEN")
+# Admin Bot Token (new bot you create)
+ADMIN_BOT_TOKEN = os.environ.get("ADMIN_BOT_TOKEN", "")
 RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID")
 RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
@@ -41,47 +45,26 @@ web_app = Flask(__name__)
 
 # ========== AUTO BACKUP FUNCTION ==========
 def auto_backup_users():
-    """Automatically backup users.json to local file on every change"""
+    """Auto backup users.json to local file"""
     try:
         if os.path.exists("users.json"):
-            # Create backup folder if not exists
-            backup_dir = "backups"
-            if not os.path.exists(backup_dir):
-                os.makedirs(backup_dir)
+            if not os.path.exists("backups"):
+                os.makedirs("backups")
             
-            # Create backup with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = f"{backup_dir}/users_backup_{timestamp}.json"
+            backup_file = f"backups/users_backup_{timestamp}.json"
+            shutil.copy("users.json", backup_file)
             
-            # Copy file
-            with open("users.json", 'r', encoding='utf-8') as src:
-                with open(backup_file, 'w', encoding='utf-8') as dst:
-                    dst.write(src.read())
-            
-            # Keep only last 10 backups
-            backups = sorted([f for f in os.listdir(backup_dir) if f.startswith("users_backup_")])
-            for old_backup in backups[:-10]:
-                os.remove(os.path.join(backup_dir, old_backup))
+            # Keep only last 20 backups
+            backups = sorted([f for f in os.listdir("backups") if f.startswith("users_backup_")])
+            for old in backups[:-20]:
+                os.remove(os.path.join("backups", old))
             
             logger.info(f"✅ Auto-backup created: {backup_file}")
     except Exception as e:
-        logger.error(f"Auto-backup failed: {e}")
+        logger.error(f"Backup failed: {e}")
 
-# ========== LIVE COUNTDOWN FUNCTION ==========
-async def send_live_countdown(chat_id, message_id, seconds):
-    """Send live countdown updates every second"""
-    for remaining in range(seconds, 0, -1):
-        try:
-            edit_text = f"🎯 *Question in progress* ⏱️ *{remaining} seconds remaining*\n\nAnswer quickly!"
-            await asyncio.sleep(1)
-            
-            # Check if countdown was cancelled
-            if chat_id in active_countdowns and not active_countdowns[chat_id]:
-                break
-        except:
-            break
-
-# ========== TELEGRAM WEBHOOK ROUTE ==========
+# ========== TELEGRAM WEBHOOK ROUTE (Main Bot) ==========
 @web_app.route("/webhook", methods=["POST"])
 def telegram_webhook():
     global BOT_MAINTENANCE
@@ -94,30 +77,30 @@ def telegram_webhook():
             chat_id = message['chat']['id']
             text = message.get('text', '')
             
-            logger.info(f"📱 Message from {chat_id}: {text}")
+            logger.info(f"📱 Main Bot - Message from {chat_id}: {text}")
             
-            # Maintenance mode check
+            # Maintenance mode check - ONLY for non-admin users
             if BOT_MAINTENANCE and chat_id != ADMIN_ID:
-                send_telegram_message(chat_id, "🔧 *Quiz is under maintenance for sometime.*\n\nPlease try again later.", parse_mode="Markdown")
+                send_telegram_message(MAIN_BOT_TOKEN, chat_id, "🔧 *Quiz is under maintenance for sometime.*\n\nPlease try again later.", parse_mode="Markdown")
                 return "OK", 200
             
             if text == '/start':
-                send_telegram_message(chat_id, get_start_message())
-                send_keyboard(chat_id)
+                send_telegram_message(MAIN_BOT_TOKEN, chat_id, get_start_message())
+                send_keyboard(MAIN_BOT_TOKEN, chat_id)
             elif text == "📝 Register":
                 set_user_state(chat_id, "awaiting_phone")
-                send_telegram_message(chat_id, "📝 Send your *Phone Number*:\nExample: 9876543210", parse_mode="Markdown")
+                send_telegram_message(MAIN_BOT_TOKEN, chat_id, "📝 Send your *Phone Number*:\nExample: 9876543210", parse_mode="Markdown")
             elif text == "👤 Profile":
                 show_profile(chat_id)
             elif text == "🎯 Demo Quiz":
                 send_demo_quiz(chat_id)
             elif text == "ℹ️ About":
-                send_telegram_message(chat_id, get_about_message(), parse_mode="Markdown")
+                send_telegram_message(MAIN_BOT_TOKEN, chat_id, get_about_message(), parse_mode="Markdown")
             elif text == "💳 Donate ₹1":
                 create_payment(chat_id)
             elif text == "💸 Set UPI":
                 set_user_state(chat_id, "awaiting_upi")
-                send_telegram_message(chat_id, "💸 Send your *UPI ID*:\nExample: username@okhdfcbank", parse_mode="Markdown")
+                send_telegram_message(MAIN_BOT_TOKEN, chat_id, "💸 Send your *UPI ID*:\nExample: username@okhdfcbank", parse_mode="Markdown")
             elif text in ["🔓 Start Quiz", "🔒 Start Quiz", "Start Quiz"]:
                 start_quiz(chat_id)
             elif text == "NEXT":
@@ -133,7 +116,7 @@ def telegram_webhook():
                 if user_state == "awaiting_phone":
                     set_user_data(chat_id, "temp_phone", text)
                     set_user_state(chat_id, "awaiting_password")
-                    send_telegram_message(chat_id, "📝 Send your *Password* (min 4 chars):", parse_mode="Markdown")
+                    send_telegram_message(MAIN_BOT_TOKEN, chat_id, "📝 Send your *Password* (min 4 chars):", parse_mode="Markdown")
                 elif user_state == "awaiting_password":
                     complete_registration(chat_id, text)
                 elif user_state == "awaiting_upi":
@@ -143,12 +126,187 @@ def telegram_webhook():
                 elif user_state == "quiz_active":
                     handle_quiz_answer(chat_id, text)
                 else:
-                    send_telegram_message(chat_id, "Please use the buttons below.", reply_markup=get_keyboard(chat_id))
+                    send_telegram_message(MAIN_BOT_TOKEN, chat_id, "Please use the buttons below.", reply_markup=get_keyboard(chat_id))
         
         return "OK", 200
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return "Error", 500
+
+# ========== ADMIN BOT WEBHOOK ROUTE ==========
+@web_app.route("/admin-webhook", methods=["POST"])
+def admin_webhook():
+    """Handle admin bot updates"""
+    try:
+        update_data = request.get_json()
+        
+        if update_data and 'message' in update_data:
+            message = update_data['message']
+            chat_id = message['chat']['id']
+            text = message.get('text', '')
+            
+            # Only admin can use admin bot
+            if chat_id != ADMIN_ID:
+                send_telegram_message(ADMIN_BOT_TOKEN, chat_id, "⛔ This bot is for admin only.")
+                return "OK", 200
+            
+            logger.info(f"🤖 Admin Bot - Command: {text}")
+            
+            if text == '/start':
+                send_admin_keyboard(chat_id)
+            elif text == "📊 Statistics":
+                send_admin_stats(chat_id)
+            elif text == "✅ Verify User":
+                set_user_state(chat_id, "admin_awaiting_userid")
+                send_telegram_message(ADMIN_BOT_TOKEN, chat_id, "📝 Send the User ID to verify:")
+            elif text == "📢 Broadcast":
+                set_user_state(chat_id, "admin_awaiting_broadcast")
+                send_telegram_message(ADMIN_BOT_TOKEN, chat_id, "📝 Send the message to broadcast:")
+            elif text == "🏆 Winners":
+                send_winners_panel(chat_id)
+            elif text == "📥 Export Data":
+                export_users_data(chat_id)
+            elif text == "🔧 Stop Bot":
+                stop_maintenance(chat_id)
+            elif text == "▶️ Start Bot":
+                start_maintenance(chat_id)
+            elif text == "💾 Backup Now":
+                manual_backup(chat_id)
+            elif text == "🔙 Main Menu":
+                send_admin_keyboard(chat_id)
+            else:
+                # Handle awaiting states
+                user_state = get_user_state(chat_id)
+                if user_state == "admin_awaiting_userid":
+                    verify_user_command(chat_id, text)
+                elif user_state == "admin_awaiting_broadcast":
+                    broadcast_message(chat_id, text)
+                else:
+                    send_admin_keyboard(chat_id)
+        
+        return "OK", 200
+    except Exception as e:
+        logger.error(f"Admin webhook error: {e}")
+        return "Error", 500
+
+# ========== ADMIN BOT KEYBOARD ==========
+def send_admin_keyboard(chat_id):
+    keyboard = {
+        "keyboard": [
+            ["📊 Statistics", "✅ Verify User"],
+            ["📢 Broadcast", "🏆 Winners"],
+            ["📥 Export Data", "💾 Backup Now"],
+            ["🔧 Stop Bot", "▶️ Start Bot"],
+            ["🔙 Main Menu"]
+        ],
+        "resize_keyboard": True
+    }
+    welcome_msg = """
+🔐 *Admin Control Panel*
+
+Use the buttons below to manage the bot:
+
+📊 *Statistics* - View user stats
+✅ *Verify User* - Manually verify a user
+📢 *Broadcast* - Send message to all users
+🏆 *Winners* - View winners list
+📥 *Export Data* - Download users.json
+💾 *Backup Now* - Create manual backup
+🔧 *Stop Bot* - Enable maintenance mode
+▶️ *Start Bot* - Disable maintenance mode
+"""
+    send_telegram_message(ADMIN_BOT_TOKEN, chat_id, welcome_msg, parse_mode="Markdown", reply_markup=keyboard)
+
+def send_admin_stats(chat_id):
+    users = load_users()
+    registered = sum(1 for u in users.values() if u.get("registered", False))
+    paid = sum(1 for u in users.values() if u.get("payment_completed"))
+    winners = sum(1 for u in users.values() if u.get("current_quiz_score", 0) == 3)
+    msg = f"📊 *Statistics*\n\n👥 Registered: {registered}\n💰 Donated: {paid}\n🏆 Winners: {winners}"
+    send_telegram_message(ADMIN_BOT_TOKEN, chat_id, msg, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+
+def send_winners_panel(chat_id):
+    users = load_users()
+    winners = []
+    for uid, user in users.items():
+        if user.get("current_quiz_score", 0) == 3 and user.get("payment_completed"):
+            winners.append({
+                "id": uid,
+                "name": user.get("name", "Not set"),
+                "place": user.get("place", "Not set"),
+                "upi": user.get("upi_id", "Not set"),
+                "score": user.get("current_quiz_score", 0)
+            })
+    
+    if not winners:
+        send_telegram_message(ADMIN_BOT_TOKEN, chat_id, "No winners yet.", reply_markup=get_admin_keyboard())
+        return
+    
+    winner_text = "🏆 *WINNERS LIST* 🏆\n\n"
+    for w in winners:
+        winner_text += f"👤 *{w['name']}*\n📍 {w['place']}\n💸 `{w['upi']}`\n🆔 {w['id']}\n⭐ {w['score']}/3\n\n"
+    
+    send_telegram_message(ADMIN_BOT_TOKEN, chat_id, winner_text, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+
+def export_users_data(chat_id):
+    if os.path.exists("users.json"):
+        send_telegram_document(ADMIN_BOT_TOKEN, chat_id, "users.json", "📊 User Data Export")
+    else:
+        send_telegram_message(ADMIN_BOT_TOKEN, chat_id, "No data file found.", reply_markup=get_admin_keyboard())
+
+def manual_backup(chat_id):
+    auto_backup_users()
+    send_telegram_message(ADMIN_BOT_TOKEN, chat_id, "✅ Manual backup completed!\n📁 Saved in backups folder.", reply_markup=get_admin_keyboard())
+
+def verify_user_command(chat_id, user_id):
+    users = load_users()
+    if user_id not in users:
+        send_telegram_message(ADMIN_BOT_TOKEN, chat_id, f"❌ User {user_id} not found.", reply_markup=get_admin_keyboard())
+        set_user_state(chat_id, None)
+        return
+    
+    users[user_id]["payment_completed"] = True
+    users[user_id]["quiz_locked"] = False
+    save_users(users)
+    send_telegram_message(ADMIN_BOT_TOKEN, chat_id, f"✅ Verified user {user_id}!", reply_markup=get_admin_keyboard())
+    set_user_state(chat_id, None)
+    
+    # Notify user
+    send_telegram_message(MAIN_BOT_TOKEN, int(user_id), "✅ *Payment Verified!* 🔓 Quiz UNLOCKED!\n\nPress '🔓 Start Quiz' to play!", parse_mode="Markdown")
+
+def broadcast_message(chat_id, message):
+    users = load_users()
+    sent = 0
+    for uid in users.keys():
+        try:
+            send_telegram_message(MAIN_BOT_TOKEN, int(uid), f"📢 *Announcement*\n\n{message}", parse_mode="Markdown")
+            sent += 1
+        except:
+            pass
+    send_telegram_message(ADMIN_BOT_TOKEN, chat_id, f"✅ Broadcast sent to {sent} users", reply_markup=get_admin_keyboard())
+    set_user_state(chat_id, None)
+
+def stop_maintenance(chat_id):
+    global BOT_MAINTENANCE
+    BOT_MAINTENANCE = True
+    send_telegram_message(ADMIN_BOT_TOKEN, chat_id, "🔧 *Maintenance Mode ENABLED*\n\nUsers will see maintenance message.", parse_mode="Markdown", reply_markup=get_admin_keyboard())
+
+def start_maintenance(chat_id):
+    global BOT_MAINTENANCE
+    BOT_MAINTENANCE = False
+    send_telegram_message(ADMIN_BOT_TOKEN, chat_id, "✅ *Maintenance Mode DISABLED*\n\nBot is active again.", parse_mode="Markdown", reply_markup=get_admin_keyboard())
+
+def get_admin_keyboard():
+    return {
+        "keyboard": [
+            ["📊 Statistics", "✅ Verify User"],
+            ["📢 Broadcast", "🏆 Winners"],
+            ["📥 Export Data", "💾 Backup Now"],
+            ["🔧 Stop Bot", "▶️ Start Bot"],
+            ["🔙 Main Menu"]
+        ],
+        "resize_keyboard": True
+    }
 
 # ========== RAZORPAY WEBHOOK ==========
 @web_app.route("/razorpay-webhook", methods=["POST"])
@@ -192,9 +350,10 @@ def mark_user_paid(telegram_id, amount):
     users[telegram_id_str]["payment_completed"] = True
     users[telegram_id_str]["quiz_locked"] = False
     save_users(users)
-    auto_backup_users()  # Auto backup after change
+    auto_backup_users()
     logger.info(f"✅ User {telegram_id_str} marked as paid")
     
+    # Send updated keyboard with unlocked button
     keyboard = {
         "keyboard": [
             ["📝 Register", "👤 Profile"],
@@ -206,6 +365,7 @@ def mark_user_paid(telegram_id, amount):
     }
     
     send_telegram_message(
+        MAIN_BOT_TOKEN,
         int(telegram_id),
         f"✅ *Thank you for your Donation!* 🎉\n\n💰 Amount: ₹{amount}\n\n🔓 *Quiz UNLOCKED!*\n\nPress '🔓 Start Quiz' to play!",
         parse_mode="Markdown",
@@ -230,17 +390,21 @@ def payment_success():
 def webhook_test():
     return jsonify({"status": "alive"})
 
+@web_app.route("/admin-webhook-test", methods=["GET"])
+def admin_webhook_test():
+    return jsonify({"status": "alive", "message": "Admin bot webhook is ready"})
+
 @web_app.route("/")
 def home():
-    return "Jannat Quiz Bot is running!"
+    return "Jannat Quiz Bot is running! Admin bot also ready."
 
 def start_flask():
     port = int(os.environ.get("PORT", 10000))
     web_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 # ========== HELPER FUNCTIONS ==========
-def send_telegram_message(chat_id, text, reply_markup=None, parse_mode="Markdown"):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+def send_telegram_message(bot_token, chat_id, text, reply_markup=None, parse_mode="Markdown"):
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     data = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
     if reply_markup:
         data["reply_markup"] = reply_markup
@@ -251,7 +415,19 @@ def send_telegram_message(chat_id, text, reply_markup=None, parse_mode="Markdown
         logger.error(f"Failed to send: {e}")
         return None
 
-def send_keyboard(chat_id):
+def send_telegram_document(bot_token, chat_id, file_path, caption=""):
+    url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+    try:
+        with open(file_path, 'rb') as f:
+            files = {'document': f}
+            data = {'chat_id': chat_id, 'caption': caption}
+            response = requests.post(url, files=files, data=data)
+            return response.json()
+    except Exception as e:
+        logger.error(f"Failed to send document: {e}")
+        return None
+
+def send_keyboard(bot_token, chat_id):
     keyboard = {
         "keyboard": [
             ["📝 Register", "👤 Profile"],
@@ -261,7 +437,7 @@ def send_keyboard(chat_id):
         ],
         "resize_keyboard": True
     }
-    send_telegram_message(chat_id, "Use the buttons below:", reply_markup=keyboard)
+    send_telegram_message(bot_token, chat_id, "Use the buttons below:", reply_markup=keyboard)
 
 def get_keyboard(chat_id):
     users = load_users()
@@ -320,7 +496,6 @@ def save_users(users):
     try:
         with open("users.json", 'w', encoding='utf-8') as f:
             json.dump(users, f, indent=2, ensure_ascii=False)
-        # Auto backup after every save
         auto_backup_users()
     except Exception as e:
         logger.error(f"Failed to save: {e}")
@@ -381,7 +556,7 @@ def get_missing_fields(chat_id):
 def show_profile(chat_id):
     users = load_users()
     if str(chat_id) not in users:
-        send_telegram_message(chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
         return
     
     u = users[str(chat_id)]
@@ -401,17 +576,17 @@ def show_profile(chat_id):
 📍 Place YourCity
 📧 Email your@email.com
 """
-    send_telegram_message(chat_id, text, parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
+    send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
 
 def update_profile_field(chat_id, text, field):
     users = load_users()
     if str(chat_id) not in users:
-        send_telegram_message(chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
         return
     
     parts = text.split(" ", 1)
     if len(parts) < 2:
-        send_telegram_message(chat_id, f"❌ Send: ✏️ Name YourName", reply_markup=get_keyboard(chat_id))
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"❌ Send: ✏️ Name YourName", reply_markup=get_keyboard(chat_id))
         return
     
     value = parts[1].strip()
@@ -419,19 +594,19 @@ def update_profile_field(chat_id, text, field):
     
     users[str(chat_id)][field] = value
     save_users(users)
-    send_telegram_message(chat_id, f"✅ {field_names[field]} updated to: {value}", reply_markup=get_keyboard(chat_id))
+    send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"✅ {field_names[field]} updated to: {value}", reply_markup=get_keyboard(chat_id))
 
 # ========== REGISTRATION ==========
 def complete_registration(chat_id, password):
     if len(password) < 4:
-        send_telegram_message(chat_id, "❌ Password too short.", reply_markup=get_keyboard(chat_id))
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Password too short.", reply_markup=get_keyboard(chat_id))
         return
     
     users = load_users()
     phone = get_user_data(chat_id, "temp_phone")
     
     if str(chat_id) in users:
-        send_telegram_message(chat_id, "✅ Already registered!", reply_markup=get_keyboard(chat_id))
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "✅ Already registered!", reply_markup=get_keyboard(chat_id))
         return
     
     users[str(chat_id)] = {
@@ -449,7 +624,7 @@ def complete_registration(chat_id, password):
     }
     save_users(users)
     set_user_state(chat_id, None)
-    send_telegram_message(chat_id, "✅ *Registration Successful!*", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
+    send_telegram_message(MAIN_BOT_TOKEN, chat_id, "✅ *Registration Successful!*", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
 
 # ========== UPI ==========
 def save_upi(chat_id, upi_id):
@@ -459,6 +634,7 @@ def save_upi(chat_id, upi_id):
         save_users(users)
         set_user_state(chat_id, None)
         send_telegram_message(
+            MAIN_BOT_TOKEN,
             chat_id, 
             "✅ *UPI Saved!* 💰 ₹1000\n\n❤️ *Jannat Foundation will pay your prize on Sunday.*", 
             parse_mode="Markdown", 
@@ -472,7 +648,7 @@ def send_demo_quiz(chat_id):
     set_user_state(chat_id, "awaiting_demo")
     
     text = f"🎯 *DEMO QUIZ* ⏱️ *15 seconds*\n\n{demo['question']}\n\nA. London\nB. Berlin\nC. Paris\nD. Madrid\n\n*Reply A, B, C, or D*"
-    send_telegram_message(chat_id, text, parse_mode="Markdown")
+    send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
 
 def handle_demo_answer(chat_id, answer):
     demo = get_user_data(chat_id, "demo_q")
@@ -485,11 +661,11 @@ def handle_demo_answer(chat_id, answer):
     if answer in letter_map:
         selected = demo["options"][letter_map[answer]]
         if selected == demo.get("correct"):
-            send_telegram_message(chat_id, "✅ Correct! Donate ₹1 to unlock the real quiz!", reply_markup=get_keyboard(chat_id))
+            send_telegram_message(MAIN_BOT_TOKEN, chat_id, "✅ Correct! Donate ₹1 to unlock the real quiz!", reply_markup=get_keyboard(chat_id))
         else:
-            send_telegram_message(chat_id, f"❌ Wrong! Correct: {demo.get('correct')}", reply_markup=get_keyboard(chat_id))
+            send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"❌ Wrong! Correct: {demo.get('correct')}", reply_markup=get_keyboard(chat_id))
     else:
-        send_telegram_message(chat_id, "Reply with A, B, C, or D")
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "Reply with A, B, C, or D")
     
     set_user_state(chat_id, None)
 
@@ -497,7 +673,7 @@ def handle_demo_answer(chat_id, answer):
 def create_payment(chat_id):
     users = load_users()
     if str(chat_id) not in users:
-        send_telegram_message(chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
         return
     
     try:
@@ -512,6 +688,7 @@ def create_payment(chat_id):
         payment_url = payment_link["short_url"]
         
         send_telegram_message(
+            MAIN_BOT_TOKEN,
             chat_id,
             f"💳 *Donate ₹1*\n\n🔗 [Click to Donate]({payment_url})\n\n✅ After donation, quiz unlocks!",
             parse_mode="Markdown",
@@ -519,7 +696,7 @@ def create_payment(chat_id):
         )
     except Exception as e:
         logger.error(f"Donation error: {e}")
-        send_telegram_message(chat_id, f"❌ Error: {str(e)[:100]}", reply_markup=get_keyboard(chat_id))
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"❌ Error: {str(e)[:100]}", reply_markup=get_keyboard(chat_id))
 
 # ========== QUIZ ==========
 QUIZ_QUESTIONS = [
@@ -532,17 +709,17 @@ def start_quiz(chat_id):
     users = load_users()
     
     if str(chat_id) not in users:
-        send_telegram_message(chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
         return
     
     user = users[str(chat_id)]
     
     if not user.get("payment_completed"):
-        send_telegram_message(chat_id, "❌ Donate ₹1 first.", reply_markup=get_keyboard(chat_id))
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Donate ₹1 first.", reply_markup=get_keyboard(chat_id))
         return
     
     if user.get("quiz_locked"):
-        send_telegram_message(chat_id, "🔒 *Quiz Locked*\n\nYou have already completed the quiz.\n\nDonate ₹1 again to play a new set of questions!", reply_markup=get_keyboard(chat_id))
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "🔒 *Quiz Locked*\n\nYou have already completed the quiz.\n\nDonate ₹1 again to play a new set of questions!", reply_markup=get_keyboard(chat_id))
         return
     
     # Reset quiz
@@ -564,11 +741,11 @@ def send_question(chat_id, index):
         save_users(users)
         set_user_state(chat_id, None)
         
-        # Check if profile is complete before showing prize message
         if not profile_complete(chat_id):
             missing_fields = get_missing_fields(chat_id)
             missing_text = "\n".join(missing_fields)
             send_telegram_message(
+                MAIN_BOT_TOKEN,
                 chat_id,
                 f"🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n⚠️ *Before claiming your prize, please complete:*\n\n{missing_text}\n\nUse the Profile button to update your details.",
                 parse_mode="Markdown",
@@ -576,6 +753,7 @@ def send_question(chat_id, index):
             )
         else:
             send_telegram_message(
+                MAIN_BOT_TOKEN,
                 chat_id,
                 f"🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Set UPI' to claim ₹1000!\n\n❤️ *Jannat Foundation will pay your prize on Sunday.*\n\n*Donate ₹1 again to play a new quiz!*",
                 parse_mode="Markdown",
@@ -590,306 +768,15 @@ def send_question(chat_id, index):
     # Store start time for 15-second timer
     set_user_data(chat_id, "question_start_time", int(datetime.now().timestamp()))
     
-    # Start live countdown in separate thread
-    async def start_countdown():
-        for remaining in range(15, 0, -1):
+    # Start live countdown
+    async def send_countdown():
+        for remaining in [15, 12, 10, 8, 6, 5, 4, 3, 2, 1]:
             if not users.get(str(chat_id), {}).get("quiz_active"):
                 break
-            # Send countdown update (edits the message - simpler to just send new messages)
             if remaining in [15, 10, 5, 3, 2, 1]:
-                send_telegram_message(
-                    chat_id, 
-                    f"⏰ *Time remaining: {remaining} seconds* to answer Question {index+1}/3!",
-                    parse_mode="Markdown"
-                )
+                send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"⏰ *{remaining} seconds remaining!*", parse_mode="Markdown")
             await asyncio.sleep(1)
     
-    # Run countdown in background
-    asyncio.create_task(start_countdown())
+    asyncio.create_task(send_countdown())
     
-    # Updated question text with 15 seconds countdown
-    text = f"🎯 *Question {index+1}/3* ⏱️ *15 seconds remaining*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
-    send_telegram_message(chat_id, text, parse_mode="Markdown")
-
-def handle_quiz_answer(chat_id, answer):
-    users = load_users()
-    
-    if not users.get(str(chat_id), {}).get("quiz_active"):
-        return
-    if users.get(str(chat_id), {}).get("waiting_next"):
-        send_telegram_message(chat_id, "Press 'NEXT' for next question.")
-        return
-    
-    # Check 15-second timeout
-    question_start = get_user_data(chat_id, "question_start_time")
-    if question_start:
-        now = int(datetime.now().timestamp())
-        if now - question_start > 15:
-            users[str(chat_id)]["quiz_active"] = False
-            users[str(chat_id)]["quiz_locked"] = True
-            save_users(users)
-            set_user_state(chat_id, None)
-            
-            send_telegram_message(
-                chat_id,
-                "⏰ *Time's Up!*\n\nYou didn't answer in time.\n\n💳 *Donate ₹1 to try again!*",
-                parse_mode="Markdown",
-                reply_markup=get_keyboard(chat_id)
-            )
-            return
-    
-    q = get_user_data(chat_id, "current_q")
-    q_index = get_user_data(chat_id, "current_q_index")
-    
-    if not q:
-        set_user_state(chat_id, None)
-        return
-    
-    letter_map = {"A": 0, "B": 1, "C": 2, "D": 3}
-    
-    if answer not in letter_map:
-        send_telegram_message(chat_id, "Reply with A, B, C, or D")
-        return
-    
-    selected = q["options"][letter_map[answer]]
-    
-    if selected == q.get("correct"):
-        users[str(chat_id)]["current_quiz_score"] = users[str(chat_id)].get("current_quiz_score", 0) + 1
-        users[str(chat_id)]["waiting_next"] = True
-        save_users(users)
-        
-        # Check if this was the last question
-        if q_index + 1 >= len(QUIZ_QUESTIONS):
-            # Last question answered correctly - complete quiz
-            users[str(chat_id)]["quiz_active"] = False
-            users[str(chat_id)]["quiz_locked"] = True
-            save_users(users)
-            set_user_state(chat_id, None)
-            
-            score = users[str(chat_id)]["current_quiz_score"]
-            
-            # Check if profile is complete
-            if not profile_complete(chat_id):
-                missing_fields = get_missing_fields(chat_id)
-                missing_text = "\n".join(missing_fields)
-                send_telegram_message(
-                    chat_id,
-                    f"✅ *Correct!*\n\n🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n⚠️ *Before claiming your prize, please complete:*\n\n{missing_text}\n\nUse the Profile button to update your details.",
-                    parse_mode="Markdown",
-                    reply_markup=get_keyboard(chat_id)
-                )
-            else:
-                send_telegram_message(
-                    chat_id,
-                    f"✅ *Correct!*\n\n🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Set UPI' to claim ₹1000!\n\n❤️ *Jannat Foundation will pay your prize on Sunday.*\n\n*Donate ₹1 again to play a new quiz!*",
-                    parse_mode="Markdown",
-                    reply_markup=get_keyboard(chat_id)
-                )
-        else:
-            # Not last question - show NEXT button with missing fields reminder
-            missing = get_missing_fields(chat_id)
-            msg = f"✅ *Correct!*\n\nPress 'NEXT' for Question {q_index + 2}"
-            
-            if missing:
-                msg += "\n\n📝 *Please update these details:*\n" + "\n".join(missing)
-                msg += "\n\nUse the Profile button to update."
-            
-            next_keyboard = {"keyboard": [["NEXT"]], "resize_keyboard": True}
-            send_telegram_message(
-                chat_id,
-                msg,
-                reply_markup=next_keyboard
-            )
-    else:
-        # Wrong answer - end quiz
-        users[str(chat_id)]["quiz_active"] = False
-        users[str(chat_id)]["quiz_locked"] = True
-        save_users(users)
-        set_user_state(chat_id, None)
-        
-        send_telegram_message(
-            chat_id,
-            "❌ *Wrong Answer!*\n\n💳 *Try next time by donating ₹1*",
-            parse_mode="Markdown",
-            reply_markup=get_keyboard(chat_id)
-        )
-
-def next_question(chat_id):
-    users = load_users()
-    
-    if str(chat_id) not in users:
-        return
-    if not users[str(chat_id)].get("waiting_next"):
-        send_telegram_message(chat_id, "Answer the current question first!")
-        return
-    
-    users[str(chat_id)]["waiting_next"] = False
-    current_index = users[str(chat_id)].get("current_question_index", 0)
-    current_index += 1
-    users[str(chat_id)]["current_question_index"] = current_index
-    save_users(users)
-    
-    send_question(chat_id, current_index)
-
-# ========== ADMIN COMMANDS ==========
-async def admin_stats(update, context):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Not authorized.")
-        return
-    users = load_users()
-    registered = sum(1 for u in users.values() if u.get("registered", False))
-    paid = sum(1 for u in users.values() if u.get("payment_completed"))
-    await update.message.reply_text(f"📊 Stats\nUsers: {registered}\nDonated: {paid}")
-
-async def admin_verify(update, context):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Not authorized.")
-        return
-    args = context.args
-    if len(args) < 1:
-        await update.message.reply_text("Usage: /verify USER_ID")
-        return
-    user_id = args[0]
-    users = load_users()
-    if user_id not in users:
-        await update.message.reply_text(f"User {user_id} not found.")
-        return
-    users[user_id]["payment_completed"] = True
-    users[user_id]["quiz_locked"] = False
-    save_users(users)
-    await update.message.reply_text(f"✅ Verified user {user_id}!")
-    mark_user_paid(int(user_id), 1.0)
-
-async def admin_broadcast(update, context):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Not authorized.")
-        return
-    message = " ".join(context.args)
-    if not message:
-        await update.message.reply_text("Usage: /broadcast Your message")
-        return
-    users = load_users()
-    sent = 0
-    for uid in users.keys():
-        try:
-            send_telegram_message(int(uid), f"📢 {message}", parse_mode="Markdown")
-            sent += 1
-        except:
-            pass
-    await update.message.reply_text(f"✅ Sent to {sent} users")
-
-async def admin_export(update, context):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Not authorized.")
-        return
-    if os.path.exists("users.json"):
-        await update.message.reply_document(
-            document=open("users.json", 'rb'),
-            filename="users.json",
-            caption="User Data Export"
-        )
-
-async def stop_bot(update, context):
-    global BOT_MAINTENANCE
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Not authorized.")
-        return
-    BOT_MAINTENANCE = True
-    await update.message.reply_text("🔧 *Quiz Maintenance Mode Enabled*\n\nUsers will see maintenance message.", parse_mode="Markdown")
-
-async def start_bot(update, context):
-    global BOT_MAINTENANCE
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Not authorized.")
-        return
-    BOT_MAINTENANCE = False
-    await update.message.reply_text("✅ *Quiz Active Again*\n\nUsers can now play.", parse_mode="Markdown")
-
-async def admin_winners(update, context):
-    """Show winners panel - users who scored 3/3"""
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Not authorized.")
-        return
-    
-    users = load_users()
-    winners = []
-    
-    for uid, user in users.items():
-        if user.get("current_quiz_score", 0) == 3 and user.get("payment_completed"):
-            winners.append({
-                "id": uid,
-                "name": user.get("name", "Not set"),
-                "place": user.get("place", "Not set"),
-                "upi": user.get("upi_id", "Not set"),
-                "score": user.get("current_quiz_score", 0),
-                "date": user.get("registered_on", "Unknown")[:10]
-            })
-    
-    if not winners:
-        await update.message.reply_text("No winners yet.")
-        return
-    
-    winner_text = "🏆 *WINNERS PANEL* 🏆\n\n"
-    for w in winners:
-        winner_text += f"👤 *{w['name']}*\n"
-        winner_text += f"📍 {w['place']}\n"
-        winner_text += f"💸 UPI: `{w['upi']}`\n"
-        winner_text += f"🆔 ID: {w['id']}\n"
-        winner_text += f"📅 Date: {w['date']}\n"
-        winner_text += f"⭐ Score: {w['score']}/3\n"
-        winner_text += "─" * 20 + "\n"
-    
-    await update.message.reply_text(winner_text, parse_mode="Markdown")
-
-# ========== MAIN ==========
-def main():
-    if not TOKEN:
-        print("❌ No BOT_TOKEN!")
-        return
-    
-    print("🤖 Bot starting...")
-    
-    if not os.path.exists("users.json"):
-        save_users({})
-    
-    # Create backups folder
-    if not os.path.exists("backups"):
-        os.makedirs("backups")
-    
-    Thread(target=start_flask, daemon=True).start()
-    print("✅ Flask started")
-    
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("stats", admin_stats))
-    app.add_handler(CommandHandler("verify", admin_verify))
-    app.add_handler(CommandHandler("broadcast", admin_broadcast))
-    app.add_handler(CommandHandler("export", admin_export))
-    app.add_handler(CommandHandler("stopbot", stop_bot))
-    app.add_handler(CommandHandler("startbot", start_bot))
-    app.add_handler(CommandHandler("winners", admin_winners))
-    
-    webhook_url = "https://jannat-quiz-bot.onrender.com/webhook"
-    
-    async def set_webhook():
-        await app.bot.set_webhook(webhook_url)
-        print(f"✅ Webhook set: {webhook_url}")
-    
-    asyncio.run(set_webhook())
-    
-    print("✅ Bot ready!")
-    print("\n📋 Admin Commands:")
-    print("   /stats - View statistics")
-    print("   /verify USER_ID - Manually verify user")
-    print("   /broadcast message - Send to all users")
-    print("   /export - Download users.json")
-    print("   /stopbot - Enable maintenance mode")
-    print("   /startbot - Disable maintenance mode")
-    print("   /winners - Show winners panel")
-    
-    import time
-    while True:
-        time.sleep(10)
-
-if __name__ == "__main__":
-    import asyncio
-    main()
+    text = f"🎯 *Question {
