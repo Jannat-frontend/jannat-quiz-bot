@@ -16,10 +16,12 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 import razorpay
 
 # ========== CONFIGURATION ==========
-# Main Bot Token (your existing bot)
+# Main Quiz Bot Token (@Jannat_Foundationbot)
 MAIN_BOT_TOKEN = os.environ.get("BOT_TOKEN")
-# Admin Bot Token (your new bot @JannatAdmin_bot)
+# Admin Bot Token (@JannatAdmin_bot)
 ADMIN_BOT_TOKEN = os.environ.get("ADMIN_BOT_TOKEN", "")
+# Lobby Bot Token (@Jannatcommunity_bot)
+LOBBY_BOT_TOKEN = os.environ.get("LOBBY_BOT_TOKEN", "")
 RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID")
 RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
@@ -40,6 +42,38 @@ razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 # ========== FLASK WEBHOOK ==========
 web_app = Flask(__name__)
 
+# ========== LOAD QUESTIONS FROM JSON FILE ==========
+def load_questions():
+    """Load questions from questions.json file"""
+    if os.path.exists("questions.json"):
+        try:
+            with open("questions.json", 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading questions: {e}")
+            return {"easy": [], "medium": [], "hard": []}
+    return {"easy": [], "medium": [], "hard": []}
+
+def get_question_by_difficulty(level, index):
+    """Get a question by difficulty level (easy, medium, hard)"""
+    questions = load_questions()
+    level_questions = questions.get(level, [])
+    if level_questions:
+        # Use index to pick specific question (0,1,2) or random if index out of range
+        if index < len(level_questions):
+            return level_questions[index]
+        else:
+            return random.choice(level_questions)
+    return None
+
+def get_random_question_by_difficulty(level):
+    """Get random question from specific difficulty level"""
+    questions = load_questions()
+    level_questions = questions.get(level, [])
+    if level_questions:
+        return random.choice(level_questions)
+    return None
+
 # ========== AUTO BACKUP FUNCTION ==========
 def auto_backup_users():
     try:
@@ -56,7 +90,106 @@ def auto_backup_users():
     except Exception as e:
         logger.error(f"Backup failed: {e}")
 
-# ========== TELEGRAM WEBHOOK ROUTE (Main Bot) ==========
+# ========== LOBBY BOT (COMMUNITY BOT) WEBHOOK ==========
+@web_app.route("/lobby-webhook", methods=["POST"])
+def lobby_webhook():
+    """Handle Lobby Bot updates - landing page for users coming from ads"""
+    try:
+        update_data = request.get_json()
+        if update_data and 'message' in update_data:
+            message = update_data['message']
+            chat_id = message['chat']['id']
+            text = message.get('text', '')
+            
+            logger.info(f"🏠 Lobby Bot (@Jannatcommunity_bot) - Message from {chat_id}: {text}")
+            
+            if text == '/start':
+                send_lobby_welcome(chat_id)
+            elif text == "🎮 Start Quiz":
+                # Send deep link to main quiz bot
+                send_telegram_message(
+                    LOBBY_BOT_TOKEN, 
+                    chat_id,
+                    "✅ *Great! You're ready to play!* 🎉\n\n"
+                    "👇 *Click below to start the quiz* 👇\n\n"
+                    "🔗 https://t.me/Jannat_Foundationbot?start=lobby\n\n"
+                    "💰 *Donate just ₹1 and win ₹1000!*\n\n"
+                    "❤️ Your donation helps needy people.",
+                    parse_mode="Markdown",
+                    reply_markup=get_lobby_keyboard()
+                )
+            elif text == "ℹ️ About Foundation":
+                send_lobby_about(chat_id)
+            elif text == "📢 Share":
+                share_text = "🎉 *JANNAT FOUNDATION QUIZ* 🎉\n\n🤝 Donate ₹1 to help needy people\n💰 Win ₹1000 cash prize!\n\n👉 Join now: https://t.me/Jannatcommunity_bot"
+                send_telegram_message(LOBBY_BOT_TOKEN, chat_id, share_text, parse_mode="Markdown", reply_markup=get_lobby_keyboard())
+            else:
+                send_lobby_welcome(chat_id)
+        
+        return "OK", 200
+    except Exception as e:
+        logger.error(f"Lobby webhook error: {e}")
+        return "Error", 500
+
+def send_lobby_welcome(chat_id):
+    welcome_msg = """
+🏆 *WELCOME TO JANNAT FOUNDATION* 🏆
+
+🤝 *Our Mission:*
+Helping needy people through small donations
+
+💰 *Your Contribution:*
+Just ₹1 donation helps us serve the community
+
+🎁 *Your Reward:*
+After donation, you can play our quiz and WIN ₹1000!
+
+*How it works:*
+1️⃣ Click 'Start Quiz' below
+2️⃣ Donate ₹1 to Jannat Foundation
+3️⃣ Answer 3 simple questions
+4️⃣ Win ₹1000 on Sunday!
+
+👇 *Click the button below to begin* 👇
+"""
+    send_telegram_message(LOBBY_BOT_TOKEN, chat_id, welcome_msg, parse_mode="Markdown", reply_markup=get_lobby_keyboard())
+
+def send_lobby_about(chat_id):
+    about_msg = """
+📖 *About Jannat Foundation*
+
+Jannat Foundation is a charitable trust dedicated to helping needy people across India.
+
+*Our Programs:*
+• 🍽️ Food distribution
+• 📚 Education support
+• 💊 Medical assistance
+• 🚨 Emergency relief
+
+*Your ₹1 donation directly helps:*
+• Feed a hungry child
+• Support education
+• Provide basic medicine
+
+*The Quiz:*
+As a thank you, donors can participate in our quiz and win ₹1000 cash prize!
+
+*Contact:* @imtiazs37
+
+*Join us in making a difference!* 🤝
+"""
+    send_telegram_message(LOBBY_BOT_TOKEN, chat_id, about_msg, parse_mode="Markdown", reply_markup=get_lobby_keyboard())
+
+def get_lobby_keyboard():
+    return {
+        "keyboard": [
+            ["🎮 Start Quiz"],
+            ["ℹ️ About Foundation", "📢 Share"],
+        ],
+        "resize_keyboard": True
+    }
+
+# ========== TELEGRAM WEBHOOK ROUTE (Main Quiz Bot) ==========
 @web_app.route("/webhook", methods=["POST"])
 def telegram_webhook():
     global BOT_MAINTENANCE
@@ -66,7 +199,7 @@ def telegram_webhook():
             message = update_data['message']
             chat_id = message['chat']['id']
             text = message.get('text', '')
-            logger.info(f"📱 Main Bot - Message from {chat_id}: {text}")
+            logger.info(f"📱 Main Bot (@Jannat_Foundationbot) - Message from {chat_id}: {text}")
             
             if BOT_MAINTENANCE and chat_id != ADMIN_ID:
                 send_telegram_message(MAIN_BOT_TOKEN, chat_id, "🔧 *Quiz is under maintenance for sometime.*\n\nPlease try again later.", parse_mode="Markdown")
@@ -117,7 +250,7 @@ def telegram_webhook():
                     send_telegram_message(MAIN_BOT_TOKEN, chat_id, "Please use the buttons below.", reply_markup=get_keyboard(chat_id))
         return "OK", 200
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"Main webhook error: {e}")
         return "Error", 500
 
 # ========== ADMIN BOT WEBHOOK ROUTE ==========
@@ -134,7 +267,7 @@ def admin_webhook():
                 send_telegram_message(ADMIN_BOT_TOKEN, chat_id, "⛔ This bot is for admin only.")
                 return "OK", 200
             
-            logger.info(f"🤖 Admin Bot - Command: {text}")
+            logger.info(f"🤖 Admin Bot (@JannatAdmin_bot) - Command: {text}")
             
             if text == '/start':
                 send_admin_keyboard(chat_id)
@@ -170,6 +303,148 @@ def admin_webhook():
     except Exception as e:
         logger.error(f"Admin webhook error: {e}")
         return "Error", 500
+
+# ========== RAZORPAY WEBHOOK ==========
+@web_app.route("/razorpay-webhook", methods=["POST"])
+def razorpay_webhook():
+    try:
+        payload = request.get_json()
+        logger.info(f"🔔 RAZORPAY WEBHOOK RECEIVED")
+        event = payload.get("event", "")
+        if event in ["payment_link.paid", "payment.captured"]:
+            if event == "payment_link.paid":
+                payment_link = payload.get("payload", {}).get("payment_link", {}).get("entity", {})
+                notes = payment_link.get("notes", {})
+                telegram_id = notes.get("telegram_id")
+                amount = payment_link.get("amount", 0) / 100
+            else:
+                payment = payload.get("payload", {}).get("payment", {}).get("entity", {})
+                notes = payment.get("notes", {})
+                telegram_id = notes.get("telegram_id")
+                amount = payment.get("amount", 0) / 100
+            logger.info(f"💰 Payment: TG ID={telegram_id}, Amount=₹{amount}")
+            if telegram_id:
+                mark_user_paid(telegram_id, amount)
+        return jsonify({"status": "success"}), 200
+    except Exception as e:
+        logger.error(f"Razorpay webhook error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ========== PAYMENT SUCCESS PAGE ==========
+@web_app.route("/payment-success", methods=["GET"])
+def payment_success():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Donation Received</title></head>
+    <body style="text-align: center; padding: 50px;">
+        <h1>✅ Thank you for your Donation!</h1>
+        <p>Return to Telegram and press Start Quiz.</p>
+    </body>
+    </html>
+    """
+
+@web_app.route("/webhook-test", methods=["GET"])
+def webhook_test():
+    return jsonify({"status": "alive", "bot": "Main Quiz Bot"})
+
+@web_app.route("/admin-webhook-test", methods=["GET"])
+def admin_webhook_test():
+    return jsonify({"status": "alive", "bot": "Admin Bot"})
+
+@web_app.route("/lobby-webhook-test", methods=["GET"])
+def lobby_webhook_test():
+    return jsonify({"status": "alive", "bot": "Lobby/Community Bot"})
+
+@web_app.route("/")
+def home():
+    return """
+    <h1>Jannat Foundation Quiz Bot</h1>
+    <p>✅ Main Quiz Bot: @Jannat_Foundationbot</p>
+    <p>✅ Admin Bot: @JannatAdmin_bot</p>
+    <p>✅ Community/Lobby Bot: @Jannatcommunity_bot</p>
+    """
+
+def start_flask():
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
+# ========== HELPER FUNCTIONS ==========
+def send_telegram_message(bot_token, chat_id, text, reply_markup=None, parse_mode="Markdown"):
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    data = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+    if reply_markup:
+        data["reply_markup"] = reply_markup
+    try:
+        response = requests.post(url, json=data)
+        return response.json()
+    except Exception as e:
+        logger.error(f"Failed to send: {e}")
+        return None
+
+def send_telegram_document(bot_token, chat_id, file_path, caption=""):
+    url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+    try:
+        with open(file_path, 'rb') as f:
+            files = {'document': f}
+            data = {'chat_id': chat_id, 'caption': caption}
+            response = requests.post(url, files=files, data=data)
+            return response.json()
+    except Exception as e:
+        logger.error(f"Failed to send document: {e}")
+        return None
+
+def send_keyboard(bot_token, chat_id):
+    keyboard = {
+        "keyboard": [
+            ["📝 Register", "👤 Profile"],
+            ["🎯 Demo Quiz", "ℹ️ About"],
+            ["💳 Donate ₹1", "💸 Set UPI"],
+            ["🔒 Start Quiz"]
+        ],
+        "resize_keyboard": True
+    }
+    send_telegram_message(bot_token, chat_id, "Use the buttons below:", reply_markup=keyboard)
+
+def get_keyboard(chat_id):
+    users = load_users()
+    is_registered = str(chat_id) in users and users[str(chat_id)].get("registered", False)
+    has_paid = is_registered and users[str(chat_id)].get("payment_completed", False)
+    keyboard = [
+        ["📝 Register", "👤 Profile"],
+        ["🎯 Demo Quiz", "ℹ️ About"],
+        ["💳 Donate ₹1", "💸 Set UPI"],
+    ]
+    if is_registered and has_paid:
+        keyboard.append(["🔓 Start Quiz"])
+    else:
+        keyboard.append(["🔒 Start Quiz"])
+    return {"keyboard": keyboard, "resize_keyboard": True}
+
+def get_start_message():
+    return """
+🏆 *JANNAT FOUNDATION QUIZ* 🏆
+
+💰 *Win ₹1000!*
+
+*How it works:*
+1️⃣ Register
+2️⃣ Donate ₹1
+3️⃣ Answer 3 questions (Easy → Medium → Hard)
+4️⃣ Submit UPI
+5️⃣ Get ₹1000 on Sunday!
+"""
+
+def get_about_message():
+    return """
+📖 *Jannat Foundation Quiz*
+
+💰 Prize: ₹1000
+🎯 3 Questions (Easy, Medium, Hard)
+📅 Payout: Sunday
+
+Contact: @imtiazs37
+"""
 
 # ========== ADMIN FUNCTIONS ==========
 def send_admin_keyboard(chat_id):
@@ -271,32 +546,6 @@ def start_maintenance_mode(chat_id):
     BOT_MAINTENANCE = False
     send_telegram_message(ADMIN_BOT_TOKEN, chat_id, "✅ *Maintenance Mode DISABLED*\n\nBot is active again.", parse_mode="Markdown", reply_markup=get_admin_keyboard())
 
-# ========== RAZORPAY WEBHOOK ==========
-@web_app.route("/razorpay-webhook", methods=["POST"])
-def razorpay_webhook():
-    try:
-        payload = request.get_json()
-        logger.info(f"🔔 RAZORPAY WEBHOOK RECEIVED")
-        event = payload.get("event", "")
-        if event in ["payment_link.paid", "payment.captured"]:
-            if event == "payment_link.paid":
-                payment_link = payload.get("payload", {}).get("payment_link", {}).get("entity", {})
-                notes = payment_link.get("notes", {})
-                telegram_id = notes.get("telegram_id")
-                amount = payment_link.get("amount", 0) / 100
-            else:
-                payment = payload.get("payload", {}).get("payment", {}).get("entity", {})
-                notes = payment.get("notes", {})
-                telegram_id = notes.get("telegram_id")
-                amount = payment.get("amount", 0) / 100
-            logger.info(f"💰 Payment: TG ID={telegram_id}, Amount=₹{amount}")
-            if telegram_id:
-                mark_user_paid(telegram_id, amount)
-        return jsonify({"status": "success"}), 200
-    except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return jsonify({"error": str(e)}), 500
-
 def mark_user_paid(telegram_id, amount):
     users = load_users()
     telegram_id_str = str(telegram_id)
@@ -318,100 +567,6 @@ def mark_user_paid(telegram_id, amount):
         "resize_keyboard": True
     }
     send_telegram_message(MAIN_BOT_TOKEN, int(telegram_id), f"✅ *Thank you for your Donation!* 🎉\n\n💰 Amount: ₹{amount}\n\n🔓 *Quiz UNLOCKED!*\n\nPress '🔓 Start Quiz' to play!", parse_mode="Markdown", reply_markup=keyboard)
-
-# ========== PAYMENT SUCCESS PAGE ==========
-@web_app.route("/payment-success", methods=["GET"])
-def payment_success():
-    return "<h1>✅ Thank you for your Donation!</h1><p>Return to Telegram and press Start Quiz.</p>"
-
-@web_app.route("/webhook-test", methods=["GET"])
-def webhook_test():
-    return jsonify({"status": "alive"})
-
-@web_app.route("/")
-def home():
-    return "Jannat Quiz Bot is running!"
-
-def start_flask():
-    port = int(os.environ.get("PORT", 10000))
-    web_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
-
-# ========== HELPER FUNCTIONS ==========
-def send_telegram_message(bot_token, chat_id, text, reply_markup=None, parse_mode="Markdown"):
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    data = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
-    if reply_markup:
-        data["reply_markup"] = reply_markup
-    try:
-        response = requests.post(url, json=data)
-        return response.json()
-    except Exception as e:
-        logger.error(f"Failed to send: {e}")
-        return None
-
-def send_telegram_document(bot_token, chat_id, file_path, caption=""):
-    url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
-    try:
-        with open(file_path, 'rb') as f:
-            files = {'document': f}
-            data = {'chat_id': chat_id, 'caption': caption}
-            response = requests.post(url, files=files, data=data)
-            return response.json()
-    except Exception as e:
-        logger.error(f"Failed to send document: {e}")
-        return None
-
-def send_keyboard(bot_token, chat_id):
-    keyboard = {
-        "keyboard": [
-            ["📝 Register", "👤 Profile"],
-            ["🎯 Demo Quiz", "ℹ️ About"],
-            ["💳 Donate ₹1", "💸 Set UPI"],
-            ["🔒 Start Quiz"]
-        ],
-        "resize_keyboard": True
-    }
-    send_telegram_message(bot_token, chat_id, "Use the buttons below:", reply_markup=keyboard)
-
-def get_keyboard(chat_id):
-    users = load_users()
-    is_registered = str(chat_id) in users and users[str(chat_id)].get("registered", False)
-    has_paid = is_registered and users[str(chat_id)].get("payment_completed", False)
-    keyboard = [
-        ["📝 Register", "👤 Profile"],
-        ["🎯 Demo Quiz", "ℹ️ About"],
-        ["💳 Donate ₹1", "💸 Set UPI"],
-    ]
-    if is_registered and has_paid:
-        keyboard.append(["🔓 Start Quiz"])
-    else:
-        keyboard.append(["🔒 Start Quiz"])
-    return {"keyboard": keyboard, "resize_keyboard": True}
-
-def get_start_message():
-    return """
-🏆 *JANNAT FOUNDATION QUIZ* 🏆
-
-💰 *Win ₹1000!*
-
-*How it works:*
-1️⃣ Register
-2️⃣ Donate ₹1
-3️⃣ Answer 3 questions (15 seconds each)
-4️⃣ Submit UPI
-5️⃣ Get ₹1000 on Sunday!
-"""
-
-def get_about_message():
-    return """
-📖 *Jannat Foundation Quiz*
-
-💰 Prize: ₹1000
-🎯 3 Questions (15 seconds each)
-📅 Payout: Sunday
-
-Contact: @imtiazs37
-"""
 
 # ========== DATA FUNCTIONS ==========
 def load_users():
@@ -591,41 +746,57 @@ def create_payment(chat_id):
         logger.error(f"Donation error: {e}")
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"❌ Error: {str(e)[:100]}", reply_markup=get_keyboard(chat_id))
 
-# ========== QUIZ ==========
-QUIZ_QUESTIONS = [
-    {"id": "Q1", "text": "What is the capital of India?", "options": ["Mumbai", "New Delhi", "Kolkata", "Chennai"], "correct": "New Delhi"},
-    {"id": "Q2", "text": "Who wrote the Indian national anthem?", "options": ["Bankim Chandra Chattopadhyay", "Rabindranath Tagore", "Sarojini Naidu", "Mahatma Gandhi"], "correct": "Rabindranath Tagore"},
-    {"id": "Q3", "text": "Which planet is known as the Red Planet?", "options": ["Mars", "Jupiter", "Venus", "Saturn"], "correct": "Mars"}
-]
+# ========== QUIZ WITH DIFFICULTY LEVELS ==========
+# Questions are loaded from questions.json file
+# Question 1: Easy, Question 2: Medium, Question 3: Hard
 
 def start_quiz(chat_id):
     users = load_users()
+    
     if str(chat_id) not in users:
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
         return
+    
     user = users[str(chat_id)]
+    
     if not user.get("payment_completed"):
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Donate ₹1 first.", reply_markup=get_keyboard(chat_id))
         return
+    
     if user.get("quiz_locked"):
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "🔒 *Quiz Locked*\n\nYou have already completed the quiz.\n\nDonate ₹1 again to play a new set of questions!", reply_markup=get_keyboard(chat_id))
         return
+    
+    # Store the selected questions for this session (Easy, Medium, Hard)
+    easy_q = get_random_question_by_difficulty("easy")
+    medium_q = get_random_question_by_difficulty("medium")
+    hard_q = get_random_question_by_difficulty("hard")
+    
+    if not easy_q or not medium_q or not hard_q:
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Questions not available. Please contact admin.", reply_markup=get_keyboard(chat_id))
+        return
+    
+    users[str(chat_id)]["session_questions"] = [easy_q, medium_q, hard_q]
     users[str(chat_id)]["current_question_index"] = 0
     users[str(chat_id)]["current_quiz_score"] = 0
     users[str(chat_id)]["quiz_active"] = True
     users[str(chat_id)]["waiting_next"] = False
     save_users(users)
     set_user_state(chat_id, "quiz_active")
+    
     send_question(chat_id, 0)
 
 def send_question(chat_id, index):
-    if index >= len(QUIZ_QUESTIONS):
-        users = load_users()
+    users = load_users()
+    session_questions = users.get(str(chat_id), {}).get("session_questions", [])
+    
+    if index >= len(session_questions):
         score = users[str(chat_id)].get("current_quiz_score", 0)
         users[str(chat_id)]["quiz_active"] = False
         users[str(chat_id)]["quiz_locked"] = True
         save_users(users)
         set_user_state(chat_id, None)
+        
         if not profile_complete(chat_id):
             missing_fields = get_missing_fields(chat_id)
             missing_text = "\n".join(missing_fields)
@@ -633,11 +804,21 @@ def send_question(chat_id, index):
         else:
             send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Set UPI' to claim ₹1000!\n\n❤️ *Jannat Foundation will pay your prize on Sunday.*\n\n*Donate ₹1 again to play a new quiz!*", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
         return
-    q = QUIZ_QUESTIONS[index]
+    
+    q = session_questions[index]
+    difficulty_label = ""
+    if index == 0:
+        difficulty_label = "🌟 Easy"
+    elif index == 1:
+        difficulty_label = "⭐ Medium"
+    else:
+        difficulty_label = "⚡ Hard"
+    
     set_user_data(chat_id, "current_q", q)
     set_user_data(chat_id, "current_q_index", index)
     set_user_data(chat_id, "question_start_time", int(datetime.now().timestamp()))
     
+    # Start live countdown
     async def send_countdown():
         for remaining in [15, 12, 10, 8, 6, 5, 4, 3, 2, 1]:
             if not users.get(str(chat_id), {}).get("quiz_active"):
@@ -645,19 +826,22 @@ def send_question(chat_id, index):
             if remaining in [15, 10, 5, 3, 2, 1]:
                 send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"⏰ *{remaining} seconds remaining!*", parse_mode="Markdown")
             await asyncio.sleep(1)
+    
     asyncio.create_task(send_countdown())
     
-    text = f"🎯 *Question {index+1}/3* ⏱️ *15 seconds*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
+    text = f"🎯 *Question {index+1}/3* {difficulty_label} ⏱️ *15 seconds*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
     send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
 
 def handle_quiz_answer(chat_id, answer):
     users = load_users()
+    
     if not users.get(str(chat_id), {}).get("quiz_active"):
         return
     if users.get(str(chat_id), {}).get("waiting_next"):
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "Press 'NEXT' for next question.")
         return
     
+    # Check 15-second timeout
     question_start = get_user_data(chat_id, "question_start_time")
     if question_start:
         now = int(datetime.now().timestamp())
@@ -671,24 +855,34 @@ def handle_quiz_answer(chat_id, answer):
     
     q = get_user_data(chat_id, "current_q")
     q_index = get_user_data(chat_id, "current_q_index")
+    
     if not q:
         set_user_state(chat_id, None)
         return
+    
     letter_map = {"A": 0, "B": 1, "C": 2, "D": 3}
     if answer not in letter_map:
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "Reply with A, B, C, or D")
         return
+    
     selected = q["options"][letter_map[answer]]
+    
     if selected == q.get("correct"):
         users[str(chat_id)]["current_quiz_score"] = users[str(chat_id)].get("current_quiz_score", 0) + 1
         users[str(chat_id)]["waiting_next"] = True
         save_users(users)
-        if q_index + 1 >= len(QUIZ_QUESTIONS):
+        
+        # Check if this was the last question
+        session_questions = users.get(str(chat_id), {}).get("session_questions", [])
+        if q_index + 1 >= len(session_questions):
+            # Last question answered correctly - complete quiz
             users[str(chat_id)]["quiz_active"] = False
             users[str(chat_id)]["quiz_locked"] = True
             save_users(users)
             set_user_state(chat_id, None)
+            
             score = users[str(chat_id)]["current_quiz_score"]
+            
             if not profile_complete(chat_id):
                 missing_fields = get_missing_fields(chat_id)
                 missing_text = "\n".join(missing_fields)
@@ -704,24 +898,29 @@ def handle_quiz_answer(chat_id, answer):
             next_keyboard = {"keyboard": [["NEXT"]], "resize_keyboard": True}
             send_telegram_message(MAIN_BOT_TOKEN, chat_id, msg, reply_markup=next_keyboard)
     else:
+        # Wrong answer - end quiz
         users[str(chat_id)]["quiz_active"] = False
         users[str(chat_id)]["quiz_locked"] = True
         save_users(users)
         set_user_state(chat_id, None)
+        
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ *Wrong Answer!*\n\n💳 *Try next time by donating ₹1*", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
 
 def next_question(chat_id):
     users = load_users()
+    
     if str(chat_id) not in users:
         return
     if not users[str(chat_id)].get("waiting_next"):
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "Answer the current question first!")
         return
+    
     users[str(chat_id)]["waiting_next"] = False
     current_index = users[str(chat_id)].get("current_question_index", 0)
     current_index += 1
     users[str(chat_id)]["current_question_index"] = current_index
     save_users(users)
+    
     send_question(chat_id, current_index)
 
 # ========== MAIN ==========
@@ -730,41 +929,60 @@ def main():
         print("❌ No MAIN_BOT_TOKEN!")
         return
     
-    if not ADMIN_BOT_TOKEN:
-        print("⚠️ No ADMIN_BOT_TOKEN! Admin features disabled.")
-    
-    print("🤖 Bot starting...")
+    print("🤖 Jannat Foundation Bot Starting...")
+    print(f"✅ Main Quiz Bot: @Jannat_Foundationbot")
+    print(f"✅ Admin Bot: @JannatAdmin_bot")
+    print(f"✅ Lobby Bot: @Jannatcommunity_bot")
     
     if not os.path.exists("users.json"):
         save_users({})
     if not os.path.exists("backups"):
         os.makedirs("backups")
     
+    # Check if questions.json exists
+    if not os.path.exists("questions.json"):
+        print("⚠️ questions.json not found! Please create it with Easy, Medium, Hard questions.")
+    else:
+        questions = load_questions()
+        easy_count = len(questions.get("easy", []))
+        medium_count = len(questions.get("medium", []))
+        hard_count = len(questions.get("hard", []))
+        print(f"📚 Questions loaded: {easy_count} Easy, {medium_count} Medium, {hard_count} Hard")
+    
+    # Start Flask
     Thread(target=start_flask, daemon=True).start()
-    print("✅ Flask started")
+    print("✅ Flask server started")
     
-    app = Application.builder().token(MAIN_BOT_TOKEN).build()
-    
-    webhook_url = "https://jannat-quiz-bot.onrender.com/webhook"
-    admin_webhook_url = "https://jannat-quiz-bot.onrender.com/admin-webhook"
-    
+    # Set webhooks
     async def set_webhooks():
-        await app.bot.set_webhook(webhook_url)
-        print(f"✅ Main bot webhook set: {webhook_url}")
+        # Main bot webhook
+        main_app = Application.builder().token(MAIN_BOT_TOKEN).build()
+        await main_app.bot.set_webhook("https://jannat-quiz-bot.onrender.com/webhook")
+        print(f"✅ Main bot webhook set")
+        
+        # Admin bot webhook
+        if ADMIN_BOT_TOKEN:
+            admin_app = Application.builder().token(ADMIN_BOT_TOKEN).build()
+            await admin_app.bot.set_webhook("https://jannat-quiz-bot.onrender.com/admin-webhook")
+            print(f"✅ Admin bot webhook set")
+        
+        # Lobby bot webhook
+        if LOBBY_BOT_TOKEN:
+            lobby_app = Application.builder().token(LOBBY_BOT_TOKEN).build()
+            await lobby_app.bot.set_webhook("https://jannat-quiz-bot.onrender.com/lobby-webhook")
+            print(f"✅ Lobby/Community bot webhook set")
     
     asyncio.run(set_webhooks())
     
-    # Set admin bot webhook if token exists
-    if ADMIN_BOT_TOKEN:
-        admin_app = Application.builder().token(ADMIN_BOT_TOKEN).build()
-        async def set_admin_webhook():
-            await admin_app.bot.set_webhook(admin_webhook_url)
-            print(f"✅ Admin bot webhook set: {admin_webhook_url}")
-        asyncio.run(set_admin_webhook())
-    
-    print("✅ Bot ready!")
-    print("\n📋 Admin Bot Commands (send to @JannatAdmin_bot):")
-    print("   Use the buttons - Statistics, Verify User, Broadcast, Winners, Export Data, Stop Bot, Start Bot, Backup Now")
+    print("\n" + "="*50)
+    print("🎉 ALL BOTS ARE RUNNING!")
+    print("="*50)
+    print("\n📋 Bot Links:")
+    print("   🎯 Quiz Bot: https://t.me/Jannat_Foundationbot")
+    print("   🔐 Admin Bot: https://t.me/JannatAdmin_bot")
+    print("   🏠 Community Bot: https://t.me/Jannatcommunity_bot")
+    print("\n📋 For Ads, use: https://t.me/Jannatcommunity_bot?start=ad")
+    print("="*50)
     
     import time
     while True:
