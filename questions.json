@@ -1,0 +1,98 @@
+{
+  "easy": [
+    {
+      "id": "E1",
+      "text": "What is the capital of India?",
+      "options": ["Mumbai", "New Delhi", "Kolkata", "Chennai"],
+      "correct": "New Delhi"
+    },
+    {
+      "id": "E2",
+      "text": "Which is the national animal of India?",
+      "options": ["Lion", "Elephant", "Peacock", "Tiger"],
+      "correct": "Tiger"
+    },
+    {
+      "id": "E3",
+      "text": "Who is known as the Father of the Nation in India?",
+      "options": ["Jawaharlal Nehru", "Mahatma Gandhi", "Sardar Patel", "Subhas Chandra Bose"],
+      "correct": "Mahatma Gandhi"
+    },
+    {
+      "id": "E4",
+      "text": "Which festival is known as the Festival of Lights?",
+      "options": ["Holi", "Eid", "Diwali", "Christmas"],
+      "correct": "Diwali"
+    },
+    {
+      "id": "E5",
+      "text": "What is the national flower of India?",
+      "options": ["Rose", "Lotus", "Marigold", "Sunflower"],
+      "correct": "Lotus"
+    }
+  ],
+  "medium": [
+    {
+      "id": "M1",
+      "text": "Who wrote the Indian national anthem?",
+      "options": ["Bankim Chandra Chattopadhyay", "Rabindranath Tagore", "Sarojini Naidu", "Mahatma Gandhi"],
+      "correct": "Rabindranath Tagore"
+    },
+    {
+      "id": "M2",
+      "text": "Which is the largest desert in the world?",
+      "options": ["Sahara", "Gobi", "Antarctic", "Arabian"],
+      "correct": "Antarctic"
+    },
+    {
+      "id": "M3",
+      "text": "Who painted the Mona Lisa?",
+      "options": ["Van Gogh", "Picasso", "Da Vinci", "Rembrandt"],
+      "correct": "Da Vinci"
+    },
+    {
+      "id": "M4",
+      "text": "What is the longest river in the world?",
+      "options": ["Amazon", "Nile", "Yangtze", "Mississippi"],
+      "correct": "Nile"
+    },
+    {
+      "id": "M5",
+      "text": "Who invented the light bulb?",
+      "options": ["Nikola Tesla", "Thomas Edison", "Albert Einstein", "Alexander Graham Bell"],
+      "correct": "Thomas Edison"
+    }
+  ],
+  "hard": [
+    {
+      "id": "H1",
+      "text": "Which planet is known as the Red Planet?",
+      "options": ["Mars", "Jupiter", "Venus", "Saturn"],
+      "correct": "Mars"
+    },
+    {
+      "id": "H2",
+      "text": "What is the chemical symbol for Gold?",
+      "options": ["Go", "Gd", "Au", "Ag"],
+      "correct": "Au"
+    },
+    {
+      "id": "H3",
+      "text": "Who discovered Penicillin?",
+      "options": ["Marie Curie", "Alexander Fleming", "Louis Pasteur", "Isaac Newton"],
+      "correct": "Alexander Fleming"
+    },
+    {
+      "id": "H4",
+      "text": "What is the smallest prime number?",
+      "options": ["0", "1", "2", "3"],
+      "correct": "2"
+    },
+    {
+      "id": "H5",
+      "text": "Which country gifted the Statue of Liberty to the USA?",
+      "options": ["England", "Spain", "France", "Germany"],
+      "correct": "France"
+    }
+  ]
+}
