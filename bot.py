@@ -76,10 +76,9 @@ def auto_backup_users():
     except Exception as e:
         logger.error(f"Backup failed: {e}")
 
-# ========== LOBBY BOT (COMMUNITY BOT) WEBHOOK - FIXED with URL BUTTON ==========
+# ========== LOBBY BOT (COMMUNITY BOT) WEBHOOK ==========
 @web_app.route("/lobby-webhook", methods=["POST"])
 def lobby_webhook():
-    """Handle Lobby Bot updates - landing page for users coming from ads"""
     try:
         update_data = request.get_json()
         if update_data and 'message' in update_data:
@@ -87,7 +86,7 @@ def lobby_webhook():
             chat_id = message['chat']['id']
             text = message.get('text', '')
             
-            logger.info(f"🏠 Lobby Bot (@Jannatcommunity_bot) - Message from {chat_id}: {text}")
+            logger.info(f"🏠 Lobby Bot - Message from {chat_id}: {text}")
             
             if text == '/start':
                 send_lobby_welcome(chat_id)
@@ -98,7 +97,6 @@ def lobby_webhook():
             elif text == "🔙 Main Menu":
                 send_lobby_welcome(chat_id)
         
-        # Handle callback queries from inline buttons
         elif 'callback_query' in update_data:
             callback = update_data['callback_query']
             chat_id = callback['message']['chat']['id']
@@ -111,7 +109,6 @@ def lobby_webhook():
             elif data == "main_menu":
                 send_lobby_welcome(chat_id)
             
-            # Answer callback
             send_telegram_message(LOBBY_BOT_TOKEN, chat_id, "", method="answerCallbackQuery", callback_id=callback['id'])
         
         return "OK", 200
@@ -134,13 +131,11 @@ After donation, you can play our quiz and WIN ₹1000!
 
 👇 *Click the button below to start the quiz* 👇
 """
-    # Create inline keyboard with URL button to Quiz Bot
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎮 Start Quiz", url="https://t.me/Jannat_Foundationbot?start=community")],
         [InlineKeyboardButton("ℹ️ About Foundation", callback_data="about"), InlineKeyboardButton("📢 Share", callback_data="share")],
         [InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")]
     ])
-    
     send_telegram_message(LOBBY_BOT_TOKEN, chat_id, welcome_msg, parse_mode="Markdown", reply_markup=keyboard)
 
 def send_lobby_about(chat_id):
@@ -198,7 +193,7 @@ def telegram_webhook():
             message = update_data['message']
             chat_id = message['chat']['id']
             text = message.get('text', '')
-            logger.info(f"📱 Main Bot (@Jannat_Foundationbot) - Message from {chat_id}: {text}")
+            logger.info(f"📱 Main Bot - Message from {chat_id}: {text}")
             
             if BOT_MAINTENANCE and chat_id != ADMIN_ID:
                 send_telegram_message(MAIN_BOT_TOKEN, chat_id, "🔧 *Quiz is under maintenance for sometime.*\n\nPlease try again later.", parse_mode="Markdown")
@@ -266,7 +261,7 @@ def admin_webhook():
                 send_telegram_message(ADMIN_BOT_TOKEN, chat_id, "⛔ This bot is for admin only.")
                 return "OK", 200
             
-            logger.info(f"🤖 Admin Bot (@JannatAdmin_bot) - Command: {text}")
+            logger.info(f"🤖 Admin Bot - Command: {text}")
             
             if text == '/start':
                 send_admin_keyboard(chat_id)
@@ -385,7 +380,6 @@ def send_telegram_message(bot_token, chat_id, text, reply_markup=None, parse_mod
         if isinstance(reply_markup, dict):
             data["reply_markup"] = reply_markup
         else:
-            # Convert InlineKeyboardMarkup to dict
             data["reply_markup"] = reply_markup.to_dict()
     try:
         response = requests.post(url, json=data)
@@ -758,7 +752,7 @@ def create_payment(chat_id):
         logger.error(f"Donation error: {e}")
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"❌ Error: {str(e)[:100]}", reply_markup=get_keyboard(chat_id))
 
-# ========== QUIZ - FIXED (No Auto Questions, No Difficulty Labels) ==========
+# ========== QUIZ - FIXED (NO AUTO TIMER, ONLY NEXT BUTTON) ==========
 def start_quiz(chat_id):
     users = load_users()
     
@@ -776,7 +770,7 @@ def start_quiz(chat_id):
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "🔒 *Quiz Locked*\n\nYou have already completed the quiz.\n\nDonate ₹1 again to play a new set of questions!", reply_markup=get_keyboard(chat_id))
         return
     
-    # Get questions (difficulty stored internally, not shown to user)
+    # Get questions - Easy, Medium, Hard (internal only)
     easy_q = get_random_question_by_difficulty("easy")
     medium_q = get_random_question_by_difficulty("medium")
     hard_q = get_random_question_by_difficulty("hard")
@@ -820,21 +814,10 @@ def send_question(chat_id, index):
     set_user_data(chat_id, "current_q_index", index)
     set_user_data(chat_id, "question_start_time", int(datetime.now().timestamp()))
     
-    # NO AUTO TIMER - just show the question with 15 seconds display
-    # User must answer manually, then press NEXT (no automatic next question)
-    
+    # FIXED: NO AUTO TIMER - Just show the question with timer display
+    # Timer is displayed but no automatic next question
     text = f"🎯 *Question {index+1}/3*\n\n⏱️ *15 Seconds*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
     send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
-    
-    # Send countdown updates at intervals (just for awareness, no auto action)
-    async def send_countdown_updates():
-        for remaining in [12, 9, 6, 3, 1]:
-            if not users.get(str(chat_id), {}).get("quiz_active"):
-                break
-            await asyncio.sleep(3)
-            send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"⏰ *{remaining} seconds remaining!*", parse_mode="Markdown")
-    
-    asyncio.create_task(send_countdown_updates())
 
 def handle_quiz_answer(chat_id, answer):
     users = load_users()
