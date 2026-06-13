@@ -10,8 +10,8 @@ from datetime import datetime
 from threading import Thread
 
 from flask import Flask, request, jsonify
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
 import razorpay
 
@@ -44,7 +44,6 @@ web_app = Flask(__name__)
 
 # ========== LOAD QUESTIONS FROM JSON FILE ==========
 def load_questions():
-    """Load questions from questions.json file"""
     if os.path.exists("questions.json"):
         try:
             with open("questions.json", 'r', encoding='utf-8') as f:
@@ -54,20 +53,7 @@ def load_questions():
             return {"easy": [], "medium": [], "hard": []}
     return {"easy": [], "medium": [], "hard": []}
 
-def get_question_by_difficulty(level, index):
-    """Get a question by difficulty level (easy, medium, hard)"""
-    questions = load_questions()
-    level_questions = questions.get(level, [])
-    if level_questions:
-        # Use index to pick specific question (0,1,2) or random if index out of range
-        if index < len(level_questions):
-            return level_questions[index]
-        else:
-            return random.choice(level_questions)
-    return None
-
 def get_random_question_by_difficulty(level):
-    """Get random question from specific difficulty level"""
     questions = load_questions()
     level_questions = questions.get(level, [])
     if level_questions:
@@ -90,7 +76,7 @@ def auto_backup_users():
     except Exception as e:
         logger.error(f"Backup failed: {e}")
 
-# ========== LOBBY BOT (COMMUNITY BOT) WEBHOOK ==========
+# ========== LOBBY BOT (COMMUNITY BOT) WEBHOOK - FIXED with URL BUTTON ==========
 @web_app.route("/lobby-webhook", methods=["POST"])
 def lobby_webhook():
     """Handle Lobby Bot updates - landing page for users coming from ads"""
@@ -105,26 +91,28 @@ def lobby_webhook():
             
             if text == '/start':
                 send_lobby_welcome(chat_id)
-            elif text == "🎮 Start Quiz":
-                # Send deep link to main quiz bot
-                send_telegram_message(
-                    LOBBY_BOT_TOKEN, 
-                    chat_id,
-                    "✅ *Great! You're ready to play!* 🎉\n\n"
-                    "👇 *Click below to start the quiz* 👇\n\n"
-                    "🔗 https://t.me/Jannat_Foundationbot?start=lobby\n\n"
-                    "💰 *Donate just ₹1 and win ₹1000!*\n\n"
-                    "❤️ Your donation helps needy people.",
-                    parse_mode="Markdown",
-                    reply_markup=get_lobby_keyboard()
-                )
             elif text == "ℹ️ About Foundation":
                 send_lobby_about(chat_id)
             elif text == "📢 Share":
-                share_text = "🎉 *JANNAT FOUNDATION QUIZ* 🎉\n\n🤝 Donate ₹1 to help needy people\n💰 Win ₹1000 cash prize!\n\n👉 Join now: https://t.me/Jannatcommunity_bot"
-                send_telegram_message(LOBBY_BOT_TOKEN, chat_id, share_text, parse_mode="Markdown", reply_markup=get_lobby_keyboard())
-            else:
+                send_share_options(chat_id)
+            elif text == "🔙 Main Menu":
                 send_lobby_welcome(chat_id)
+        
+        # Handle callback queries from inline buttons
+        elif 'callback_query' in update_data:
+            callback = update_data['callback_query']
+            chat_id = callback['message']['chat']['id']
+            data = callback.get('data', '')
+            
+            if data == "about":
+                send_lobby_about(chat_id)
+            elif data == "share":
+                send_share_options(chat_id)
+            elif data == "main_menu":
+                send_lobby_welcome(chat_id)
+            
+            # Answer callback
+            send_telegram_message(LOBBY_BOT_TOKEN, chat_id, "", method="answerCallbackQuery", callback_id=callback['id'])
         
         return "OK", 200
     except Exception as e:
@@ -144,15 +132,16 @@ Just ₹1 donation helps us serve the community
 🎁 *Your Reward:*
 After donation, you can play our quiz and WIN ₹1000!
 
-*How it works:*
-1️⃣ Click 'Start Quiz' below
-2️⃣ Donate ₹1 to Jannat Foundation
-3️⃣ Answer 3 simple questions
-4️⃣ Win ₹1000 on Sunday!
-
-👇 *Click the button below to begin* 👇
+👇 *Click the button below to start the quiz* 👇
 """
-    send_telegram_message(LOBBY_BOT_TOKEN, chat_id, welcome_msg, parse_mode="Markdown", reply_markup=get_lobby_keyboard())
+    # Create inline keyboard with URL button to Quiz Bot
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎮 Start Quiz", url="https://t.me/Jannat_Foundationbot?start=community")],
+        [InlineKeyboardButton("ℹ️ About Foundation", callback_data="about"), InlineKeyboardButton("📢 Share", callback_data="share")],
+        [InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")]
+    ])
+    
+    send_telegram_message(LOBBY_BOT_TOKEN, chat_id, welcome_msg, parse_mode="Markdown", reply_markup=keyboard)
 
 def send_lobby_about(chat_id):
     about_msg = """
@@ -178,16 +167,26 @@ As a thank you, donors can participate in our quiz and win ₹1000 cash prize!
 
 *Join us in making a difference!* 🤝
 """
-    send_telegram_message(LOBBY_BOT_TOKEN, chat_id, about_msg, parse_mode="Markdown", reply_markup=get_lobby_keyboard())
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎮 Start Quiz", url="https://t.me/Jannat_Foundationbot?start=community")],
+        [InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")]
+    ])
+    send_telegram_message(LOBBY_BOT_TOKEN, chat_id, about_msg, parse_mode="Markdown", reply_markup=keyboard)
 
-def get_lobby_keyboard():
-    return {
-        "keyboard": [
-            ["🎮 Start Quiz"],
-            ["ℹ️ About Foundation", "📢 Share"],
-        ],
-        "resize_keyboard": True
-    }
+def send_share_options(chat_id):
+    share_msg = (
+        "📢 *Share with your friends!*\n\n"
+        "🔗 **Join our community:**\n"
+        "https://t.me/Jannatcommunity_bot\n\n"
+        "🎮 **Play the quiz & win ₹1000:**\n"
+        "https://t.me/Jannat_Foundationbot\n\n"
+        "❤️ *Help us reach more people!*\n\n"
+        "_Copy and share these links with your friends!_"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")]
+    ])
+    send_telegram_message(LOBBY_BOT_TOKEN, chat_id, share_msg, parse_mode="Markdown", reply_markup=keyboard)
 
 # ========== TELEGRAM WEBHOOK ROUTE (Main Quiz Bot) ==========
 @web_app.route("/webhook", methods=["POST"])
@@ -370,11 +369,24 @@ def start_flask():
     web_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 # ========== HELPER FUNCTIONS ==========
-def send_telegram_message(bot_token, chat_id, text, reply_markup=None, parse_mode="Markdown"):
+def send_telegram_message(bot_token, chat_id, text, reply_markup=None, parse_mode="Markdown", method="sendMessage", callback_id=None):
+    if method == "answerCallbackQuery":
+        url = f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery"
+        data = {"callback_query_id": callback_id}
+        try:
+            requests.post(url, json=data)
+        except:
+            pass
+        return
+    
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     data = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
     if reply_markup:
-        data["reply_markup"] = reply_markup
+        if isinstance(reply_markup, dict):
+            data["reply_markup"] = reply_markup
+        else:
+            # Convert InlineKeyboardMarkup to dict
+            data["reply_markup"] = reply_markup.to_dict()
     try:
         response = requests.post(url, json=data)
         return response.json()
@@ -430,7 +442,7 @@ def get_start_message():
 *How it works:*
 1️⃣ Register
 2️⃣ Donate ₹1
-3️⃣ Answer 3 questions (Easy → Medium → Hard)
+3️⃣ Answer 3 questions (15 seconds each)
 4️⃣ Submit UPI
 5️⃣ Get ₹1000 on Sunday!
 """
@@ -440,7 +452,7 @@ def get_about_message():
 📖 *Jannat Foundation Quiz*
 
 💰 Prize: ₹1000
-🎯 3 Questions (Easy, Medium, Hard)
+🎯 3 Questions
 📅 Payout: Sunday
 
 Contact: @imtiazs37
@@ -708,7 +720,7 @@ def send_demo_quiz(chat_id):
     demo = {"question": "What is the capital of France?", "options": ["London", "Berlin", "Paris", "Madrid"], "correct": "Paris"}
     set_user_data(chat_id, "demo_q", demo)
     set_user_state(chat_id, "awaiting_demo")
-    text = f"🎯 *DEMO QUIZ* ⏱️ *15 seconds*\n\n{demo['question']}\n\nA. London\nB. Berlin\nC. Paris\nD. Madrid\n\n*Reply A, B, C, or D*"
+    text = f"🎯 *DEMO QUIZ*\n\n⏱️ *15 Seconds*\n\n{demo['question']}\n\nA. London\nB. Berlin\nC. Paris\nD. Madrid\n\n*Reply A, B, C, or D*"
     send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
 
 def handle_demo_answer(chat_id, answer):
@@ -746,10 +758,7 @@ def create_payment(chat_id):
         logger.error(f"Donation error: {e}")
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"❌ Error: {str(e)[:100]}", reply_markup=get_keyboard(chat_id))
 
-# ========== QUIZ WITH DIFFICULTY LEVELS ==========
-# Questions are loaded from questions.json file
-# Question 1: Easy, Question 2: Medium, Question 3: Hard
-
+# ========== QUIZ - FIXED (No Auto Questions, No Difficulty Labels) ==========
 def start_quiz(chat_id):
     users = load_users()
     
@@ -767,7 +776,7 @@ def start_quiz(chat_id):
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "🔒 *Quiz Locked*\n\nYou have already completed the quiz.\n\nDonate ₹1 again to play a new set of questions!", reply_markup=get_keyboard(chat_id))
         return
     
-    # Store the selected questions for this session (Easy, Medium, Hard)
+    # Get questions (difficulty stored internally, not shown to user)
     easy_q = get_random_question_by_difficulty("easy")
     medium_q = get_random_question_by_difficulty("medium")
     hard_q = get_random_question_by_difficulty("hard")
@@ -806,31 +815,26 @@ def send_question(chat_id, index):
         return
     
     q = session_questions[index]
-    difficulty_label = ""
-    if index == 0:
-        difficulty_label = "🌟 Easy"
-    elif index == 1:
-        difficulty_label = "⭐ Medium"
-    else:
-        difficulty_label = "⚡ Hard"
     
     set_user_data(chat_id, "current_q", q)
     set_user_data(chat_id, "current_q_index", index)
     set_user_data(chat_id, "question_start_time", int(datetime.now().timestamp()))
     
-    # Start live countdown
-    async def send_countdown():
-        for remaining in [15, 12, 10, 8, 6, 5, 4, 3, 2, 1]:
+    # NO AUTO TIMER - just show the question with 15 seconds display
+    # User must answer manually, then press NEXT (no automatic next question)
+    
+    text = f"🎯 *Question {index+1}/3*\n\n⏱️ *15 Seconds*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
+    send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
+    
+    # Send countdown updates at intervals (just for awareness, no auto action)
+    async def send_countdown_updates():
+        for remaining in [12, 9, 6, 3, 1]:
             if not users.get(str(chat_id), {}).get("quiz_active"):
                 break
-            if remaining in [15, 10, 5, 3, 2, 1]:
-                send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"⏰ *{remaining} seconds remaining!*", parse_mode="Markdown")
-            await asyncio.sleep(1)
+            await asyncio.sleep(3)
+            send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"⏰ *{remaining} seconds remaining!*", parse_mode="Markdown")
     
-    asyncio.create_task(send_countdown())
-    
-    text = f"🎯 *Question {index+1}/3* {difficulty_label} ⏱️ *15 seconds*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
-    send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
+    asyncio.create_task(send_countdown_updates())
 
 def handle_quiz_answer(chat_id, answer):
     users = load_users()
@@ -872,10 +876,9 @@ def handle_quiz_answer(chat_id, answer):
         users[str(chat_id)]["waiting_next"] = True
         save_users(users)
         
-        # Check if this was the last question
         session_questions = users.get(str(chat_id), {}).get("session_questions", [])
         if q_index + 1 >= len(session_questions):
-            # Last question answered correctly - complete quiz
+            # Last question - complete quiz
             users[str(chat_id)]["quiz_active"] = False
             users[str(chat_id)]["quiz_locked"] = True
             save_users(users)
@@ -939,7 +942,6 @@ def main():
     if not os.path.exists("backups"):
         os.makedirs("backups")
     
-    # Check if questions.json exists
     if not os.path.exists("questions.json"):
         print("⚠️ questions.json not found! Please create it with Easy, Medium, Hard questions.")
     else:
@@ -949,11 +951,9 @@ def main():
         hard_count = len(questions.get("hard", []))
         print(f"📚 Questions loaded: {easy_count} Easy, {medium_count} Medium, {hard_count} Hard")
     
-    # Start Flask
     Thread(target=start_flask, daemon=True).start()
     print("✅ Flask server started")
     
-    # Set webhooks
     async def set_webhooks():
         # Main bot webhook
         main_app = Application.builder().token(MAIN_BOT_TOKEN).build()
