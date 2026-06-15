@@ -6,8 +6,6 @@ import random
 import requests
 import asyncio
 import shutil
-import threading
-import time
 from datetime import datetime
 from threading import Thread
 
@@ -61,18 +59,6 @@ def get_random_question_by_difficulty(level):
     if level_questions:
         return random.choice(level_questions)
     return None
-
-def shuffle_options(question):
-    """Shuffle the options to prevent easy copy-paste to Google"""
-    if question and "options" in question:
-        original_options = question["options"].copy()
-        correct = question["correct"]
-        # Shuffle options while keeping track of correct answer
-        shuffled_options = original_options.copy()
-        random.shuffle(shuffled_options)
-        question["options"] = shuffled_options
-        # correct remains the same text value (not index)
-    return question
 
 # ========== AUTO BACKUP FUNCTION ==========
 def auto_backup_users():
@@ -234,11 +220,11 @@ def telegram_webhook():
                 start_quiz(chat_id)
             elif text == "NEXT":
                 next_question(chat_id)
-            elif (text.startswith("✏️ Name ") or text.startswith("Name ")):
+            elif text.startswith("✏️ Name "):
                 update_profile_field(chat_id, text, "name")
-            elif (text.startswith("📍 Place ") or text.startswith("Place ")):
+            elif text.startswith("📍 Place "):
                 update_profile_field(chat_id, text, "place")
-            elif (text.startswith("📧 Email ") or text.startswith("Email ")):
+            elif text.startswith("📧 Email "):
                 update_profile_field(chat_id, text, "email")
             else:
                 user_state = get_user_state(chat_id)
@@ -450,7 +436,7 @@ def get_start_message():
 *How it works:*
 1️⃣ Register
 2️⃣ Donate ₹1
-3️⃣ Answer 3 questions (11 seconds each)
+3️⃣ Answer 3 questions
 4️⃣ Submit UPI
 5️⃣ Get ₹1000 on Sunday!
 """
@@ -460,7 +446,7 @@ def get_about_message():
 📖 *Jannat Foundation Quiz*
 
 💰 Prize: ₹1000
-🎯 3 Questions (11 seconds each)
+🎯 3 Questions
 📅 Payout: Sunday
 
 Contact: @imtiazs37
@@ -655,15 +641,18 @@ def get_missing_fields(chat_id):
         missing.append("💸 Set UPI (use the button)")
     return missing
 
+# ========== PROFILE - UPDATED WITH TG ID ==========
 def show_profile(chat_id):
     users = load_users()
     if str(chat_id) not in users:
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
         return
+    
     u = users[str(chat_id)]
     text = f"""
 👤 *Your Profile*
 
+🆔 TG ID: `{chat_id}`
 📱 Phone: {u.get('phone', 'Not set')}
 👨 Name: {u.get('name', 'Not set')}
 📍 Place: {u.get('place', 'Not set')}
@@ -672,34 +661,23 @@ def show_profile(chat_id):
 💰 Donated: {'✅ Yes' if u.get('payment_completed') else '❌ No'}
 🏆 Score: {u.get('current_quiz_score', 0)}/3
 
-*To update (with or without emoji):*
-Name YourName
-Place YourCity
-Email your@email.com
+*To update:*
+✏️ Name YourName
+📍 Place YourCity
+📧 Email your@email.com
 """
     send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
 
-# FIXED: Profile update handler - works with or without emoji
 def update_profile_field(chat_id, text, field):
     users = load_users()
     if str(chat_id) not in users:
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
         return
-    
-    # Extract value - handles both "Name John" and "✏️ Name John"
-    if field == "name":
-        value = text.replace("✏️ Name ", "").replace("Name ", "").strip()
-    elif field == "place":
-        value = text.replace("📍 Place ", "").replace("Place ", "").strip()
-    elif field == "email":
-        value = text.replace("📧 Email ", "").replace("Email ", "").strip()
-    else:
+    parts = text.split(" ", 1)
+    if len(parts) < 2:
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"❌ Send: ✏️ Name YourName", reply_markup=get_keyboard(chat_id))
         return
-    
-    if not value:
-        send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"❌ Please provide a valid {field}.", reply_markup=get_keyboard(chat_id))
-        return
-    
+    value = parts[1].strip()
     field_names = {"name": "Name", "place": "Place", "email": "Email"}
     users[str(chat_id)][field] = value
     save_users(users)
@@ -739,7 +717,7 @@ def send_demo_quiz(chat_id):
     demo = {"question": "What is the capital of France?", "options": ["London", "Berlin", "Paris", "Madrid"], "correct": "Paris"}
     set_user_data(chat_id, "demo_q", demo)
     set_user_state(chat_id, "awaiting_demo")
-    text = f"🎯 *DEMO QUIZ*\n\n⏱️ *11 Seconds*\n\n{demo['question']}\n\nA. London\nB. Berlin\nC. Paris\nD. Madrid\n\n*Reply A, B, C, or D*"
+    text = f"🎯 *DEMO QUIZ*\n\n{demo['question']}\n\nA. London\nB. Berlin\nC. Paris\nD. Madrid\n\n*Reply A, B, C, or D*"
     send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
 
 def handle_demo_answer(chat_id, answer):
@@ -777,57 +755,7 @@ def create_payment(chat_id):
         logger.error(f"Donation error: {e}")
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"❌ Error: {str(e)[:100]}", reply_markup=get_keyboard(chat_id))
 
-# ========== QUIZ - WITH SHUFFLED OPTIONS, COUNTDOWN TIMER (11 SEC) ==========
-def countdown_warning(chat_id, question_index):
-    """Send warning at 8, 5, 3, 1 seconds (11 second total)"""
-    time.sleep(3)  # Wait 3 sec (11-3=8 remaining)
-    
-    users = load_users()
-    if str(chat_id) not in users:
-        return
-    if not users[str(chat_id)].get("quiz_active"):
-        return
-    
-    current = users[str(chat_id)].get("current_question_index", 0)
-    if current == question_index:
-        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "⏰ *8 seconds remaining!*", parse_mode="Markdown")
-    
-    time.sleep(3)  # Wait 3 more sec (8-3=5 remaining)
-    
-    users = load_users()
-    if str(chat_id) not in users:
-        return
-    if not users[str(chat_id)].get("quiz_active"):
-        return
-    
-    current = users[str(chat_id)].get("current_question_index", 0)
-    if current == question_index:
-        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "⏰ *5 seconds remaining!*", parse_mode="Markdown")
-    
-    time.sleep(2)  # Wait 2 sec (5-2=3 remaining)
-    
-    users = load_users()
-    if str(chat_id) not in users:
-        return
-    if not users[str(chat_id)].get("quiz_active"):
-        return
-    
-    current = users[str(chat_id)].get("current_question_index", 0)
-    if current == question_index:
-        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "⏰ *3 seconds remaining!*", parse_mode="Markdown")
-    
-    time.sleep(2)  # Wait 2 sec (3-2=1 remaining)
-    
-    users = load_users()
-    if str(chat_id) not in users:
-        return
-    if not users[str(chat_id)].get("quiz_active"):
-        return
-    
-    current = users[str(chat_id)].get("current_question_index", 0)
-    if current == question_index:
-        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "⏰ *1 second remaining!*", parse_mode="Markdown")
-
+# ========== QUIZ - FIXED (Timer Hidden, Different Limits) ==========
 def start_quiz(chat_id):
     users = load_users()
     
@@ -853,11 +781,6 @@ def start_quiz(chat_id):
     if not easy_q or not medium_q or not hard_q:
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Questions not available. Please contact admin.", reply_markup=get_keyboard(chat_id))
         return
-    
-    # Shuffle options for all questions (copy protection)
-    easy_q = shuffle_options(easy_q.copy())
-    medium_q = shuffle_options(medium_q.copy())
-    hard_q = shuffle_options(hard_q.copy())
     
     users[str(chat_id)]["session_questions"] = [easy_q, medium_q, hard_q]
     users[str(chat_id)]["current_question_index"] = 0
@@ -894,20 +817,8 @@ def send_question(chat_id, index):
     set_user_data(chat_id, "current_q_index", index)
     set_user_data(chat_id, "question_start_time", int(datetime.now().timestamp()))
     
-    # Start countdown warning thread (11 seconds total)
-    try:
-        countdown_thread = threading.Thread(target=countdown_warning, args=(chat_id, index), daemon=True)
-        countdown_thread.start()
-    except Exception as e:
-        logger.error(f"Countdown thread error: {e}")
-    
-    # Show question with timer (11 seconds)
-    text = f"🎯 *Question {index+1}/3*\n\n⏱️ *11 Seconds*\n\n{q['text']}\n\n"
-    # Display shuffled options with letters
-    for i, opt in enumerate(q["options"]):
-        text += f"{chr(65+i)}. {opt}\n"
-    text += "\n*Reply A, B, C, or D*"
-    
+    # FIXED: Removed timer display - user sees no time information
+    text = f"🎯 *Question {index+1}/3*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
     send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
 
 def handle_quiz_answer(chat_id, answer):
@@ -919,11 +830,14 @@ def handle_quiz_answer(chat_id, answer):
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "Press 'NEXT' for next question.")
         return
     
-    # Check 11-second timeout
+    # Check timeout with different limits per question
     question_start = get_user_data(chat_id, "question_start_time")
     if question_start:
         now = int(datetime.now().timestamp())
-        if now - question_start > 11:
+        q_index = get_user_data(chat_id, "current_q_index")
+        # Question 1: 15 seconds, Question 2 & 3: 11 seconds
+        allowed_time = 15 if q_index == 0 else 11
+        if now - question_start > allowed_time:
             users[str(chat_id)]["quiz_active"] = False
             users[str(chat_id)]["quiz_locked"] = True
             save_users(users)
