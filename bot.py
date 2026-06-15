@@ -8,12 +8,14 @@ import asyncio
 import shutil
 from datetime import datetime
 from threading import Thread
+from io import BytesIO
 
 from flask import Flask, request, jsonify
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
 import razorpay
+from PIL import Image, ImageDraw, ImageFont
 
 # ========== CONFIGURATION ==========
 # Main Quiz Bot Token (@Jannat_Foundationbot)
@@ -60,6 +62,65 @@ def get_random_question_by_difficulty(level):
         return random.choice(level_questions)
     return None
 
+# ========== CREATE QUESTION IMAGE (Protect from copy) ==========
+def create_question_image(question_text, options, question_number):
+    """Create an image from question text and options to prevent copying"""
+    try:
+        # Create image
+        img = Image.new('RGB', (900, 500), color='white')
+        draw = ImageDraw.Draw(img)
+        
+        # Try to use a font, fallback to default
+        try:
+            font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+            font_text = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
+        except:
+            font_title = ImageFont.load_default()
+            font_text = ImageFont.load_default()
+        
+        # Draw question header
+        draw.text((30, 20), f"Question {question_number}/3", fill='black', font=font_title)
+        draw.text((30, 70), "─" * 40, fill='gray', font=font_text)
+        
+        # Draw question text (wrap if too long)
+        y_pos = 110
+        words = question_text.split()
+        lines = []
+        current_line = ""
+        for word in words:
+            test_line = current_line + " " + word if current_line else word
+            if len(test_line) <= 60:
+                current_line = test_line
+            else:
+                lines.append(current_line)
+                current_line = word
+        if current_line:
+            lines.append(current_line)
+        
+        for line in lines:
+            draw.text((30, y_pos), line, fill='black', font=font_text)
+            y_pos += 35
+        
+        y_pos += 20
+        
+        # Draw options
+        option_labels = ['A', 'B', 'C', 'D']
+        for i, opt in enumerate(options):
+            draw.text((30, y_pos + (i * 40)), f"{option_labels[i]}. {opt}", fill='black', font=font_text)
+        
+        # Draw instruction
+        draw.text((30, y_pos + 180), "Reply with A, B, C, or D", fill='gray', font=font_text)
+        
+        # Save to bytes
+        img_bytes = BytesIO()
+        img.save(img_bytes, format='PNG')
+        img_bytes.seek(0)
+        
+        return img_bytes
+    except Exception as e:
+        logger.error(f"Error creating image: {e}")
+        return None
+
 # ========== AUTO BACKUP FUNCTION ==========
 def auto_backup_users():
     try:
@@ -76,7 +137,31 @@ def auto_backup_users():
     except Exception as e:
         logger.error(f"Backup failed: {e}")
 
-# ========== LOBBY BOT (COMMUNITY BOT) WEBHOOK ==========
+# ========== ADMIN WINNER NOTIFICATION ==========
+def notify_admin_winner(chat_id):
+    """Send notification to admin when user completes quiz with 3/3"""
+    users = load_users()
+    u = users.get(str(chat_id), {})
+    
+    msg = f"""
+🏆 *NEW QUIZ WINNER!* 🏆
+
+🆔 TG ID: `{chat_id}`
+👨 Name: {u.get('name', 'Not set')}
+📍 Place: {u.get('place', 'Not set')}
+📱 Phone: {u.get('phone', 'Not set')}
+📧 Email: {u.get('email', 'Not set')}
+💸 UPI: {u.get('upi_id', 'Not set')}
+
+⭐ Score: 3/3
+💰 Prize: ₹1000
+📅 Eligible for Sunday payout
+
+❤️ *Jannat Foundation*
+"""
+    send_telegram_message(ADMIN_BOT_TOKEN, ADMIN_ID, msg, parse_mode="Markdown")
+
+# ========== LOBBY BOT (COMMUNITY BOT) WEBHOOK - FIXED LINK ==========
 @web_app.route("/lobby-webhook", methods=["POST"])
 def lobby_webhook():
     try:
@@ -131,8 +216,9 @@ After donation, you can play our quiz and WIN ₹1000!
 
 👇 *Click the button below to start the quiz* 👇
 """
+    # FIXED: Using simpler URL without ?start parameter for better reliability
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎮 Start Quiz", url="https://t.me/Jannat_Foundationbot?start=community")],
+        [InlineKeyboardButton("🎮 Start Quiz", url="https://t.me/Jannat_Foundationbot")],
         [InlineKeyboardButton("ℹ️ About Foundation", callback_data="about"), InlineKeyboardButton("📢 Share", callback_data="share")],
         [InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")]
     ])
@@ -163,7 +249,7 @@ As a thank you, donors can participate in our quiz and win ₹1000 cash prize!
 *Join us in making a difference!* 🤝
 """
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎮 Start Quiz", url="https://t.me/Jannat_Foundationbot?start=community")],
+        [InlineKeyboardButton("🎮 Start Quiz", url="https://t.me/Jannat_Foundationbot")],
         [InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")]
     ])
     send_telegram_message(LOBBY_BOT_TOKEN, chat_id, about_msg, parse_mode="Markdown", reply_markup=keyboard)
@@ -386,6 +472,22 @@ def send_telegram_message(bot_token, chat_id, text, reply_markup=None, parse_mod
         return response.json()
     except Exception as e:
         logger.error(f"Failed to send: {e}")
+        return None
+
+def send_telegram_photo(bot_token, chat_id, photo_bytes, caption=None, reply_markup=None):
+    """Send photo to Telegram"""
+    url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+    files = {'photo': ('question.png', photo_bytes, 'image/png')}
+    data = {'chat_id': chat_id}
+    if caption:
+        data['caption'] = caption
+    if reply_markup:
+        data['reply_markup'] = json.dumps(reply_markup)
+    try:
+        response = requests.post(url, files=files, data=data)
+        return response.json()
+    except Exception as e:
+        logger.error(f"Failed to send photo: {e}")
         return None
 
 def send_telegram_document(bot_token, chat_id, file_path, caption=""):
@@ -641,7 +743,6 @@ def get_missing_fields(chat_id):
         missing.append("💸 Set UPI (use the button)")
     return missing
 
-# ========== PROFILE - UPDATED WITH TG ID ==========
 def show_profile(chat_id):
     users = load_users()
     if str(chat_id) not in users:
@@ -717,8 +818,14 @@ def send_demo_quiz(chat_id):
     demo = {"question": "What is the capital of France?", "options": ["London", "Berlin", "Paris", "Madrid"], "correct": "Paris"}
     set_user_data(chat_id, "demo_q", demo)
     set_user_state(chat_id, "awaiting_demo")
-    text = f"🎯 *DEMO QUIZ*\n\n{demo['question']}\n\nA. London\nB. Berlin\nC. Paris\nD. Madrid\n\n*Reply A, B, C, or D*"
-    send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
+    
+    # Demo quiz also as image
+    img_bytes = create_question_image(demo['question'], demo['options'], 1)
+    if img_bytes:
+        send_telegram_photo(MAIN_BOT_TOKEN, chat_id, img_bytes, caption="🎯 *DEMO QUIZ*", reply_markup=None)
+    else:
+        text = f"🎯 *DEMO QUIZ*\n\n{demo['question']}\n\nA. London\nB. Berlin\nC. Paris\nD. Madrid\n\n*Reply A, B, C, or D*"
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
 
 def handle_demo_answer(chat_id, answer):
     demo = get_user_data(chat_id, "demo_q")
@@ -755,7 +862,7 @@ def create_payment(chat_id):
         logger.error(f"Donation error: {e}")
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"❌ Error: {str(e)[:100]}", reply_markup=get_keyboard(chat_id))
 
-# ========== QUIZ - FIXED (Timer Hidden, Different Limits) ==========
+# ========== QUIZ - WITH IMAGE PROTECTION ==========
 def start_quiz(chat_id):
     users = load_users()
     
@@ -803,6 +910,10 @@ def send_question(chat_id, index):
         save_users(users)
         set_user_state(chat_id, None)
         
+        # Send admin notification if perfect score
+        if score == 3:
+            notify_admin_winner(chat_id)
+        
         if not profile_complete(chat_id):
             missing_fields = get_missing_fields(chat_id)
             missing_text = "\n".join(missing_fields)
@@ -817,9 +928,16 @@ def send_question(chat_id, index):
     set_user_data(chat_id, "current_q_index", index)
     set_user_data(chat_id, "question_start_time", int(datetime.now().timestamp()))
     
-    # FIXED: Removed timer display - user sees no time information
-    text = f"🎯 *Question {index+1}/3*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
-    send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
+    # NEW: Send question as image to prevent copy/paste
+    img_bytes = create_question_image(q['text'], q['options'], index + 1)
+    
+    if img_bytes:
+        # Send as photo (cannot copy text)
+        send_telegram_photo(MAIN_BOT_TOKEN, chat_id, img_bytes, caption=f"🎯 *Question {index+1}/3*", reply_markup=None)
+    else:
+        # Fallback to text if image creation fails
+        text = f"🎯 *Question {index+1}/3*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
+        send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
 
 def handle_quiz_answer(chat_id, answer):
     users = load_users()
@@ -873,6 +991,10 @@ def handle_quiz_answer(chat_id, answer):
             set_user_state(chat_id, None)
             
             score = users[str(chat_id)]["current_quiz_score"]
+            
+            # Send admin notification if perfect score
+            if score == 3:
+                notify_admin_winner(chat_id)
             
             if not profile_complete(chat_id):
                 missing_fields = get_missing_fields(chat_id)
