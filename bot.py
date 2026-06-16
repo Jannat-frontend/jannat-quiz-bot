@@ -818,30 +818,8 @@ def send_demo_quiz(chat_id):
     demo = {"question": "What is the capital of France?", "options": ["London", "Berlin", "Paris", "Madrid"], "correct": "Paris"}
     set_user_data(chat_id, "demo_q", demo)
     set_user_state(chat_id, "awaiting_demo")
-    
-    # Demo quiz also as image
-    img_bytes = create_question_image(demo['question'], demo['options'], 1)
-    if img_bytes:
-        send_telegram_photo(MAIN_BOT_TOKEN, chat_id, img_bytes, caption="🎯 *DEMO QUIZ*", reply_markup=None)
-    else:
-        text = f"🎯 *DEMO QUIZ*\n\n{demo['question']}\n\nA. London\nB. Berlin\nC. Paris\nD. Madrid\n\n*Reply A, B, C, or D*"
-        send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
-
-def handle_demo_answer(chat_id, answer):
-    demo = get_user_data(chat_id, "demo_q")
-    if not demo:
-        set_user_state(chat_id, None)
-        return
-    letter_map = {"A": 0, "B": 1, "C": 2, "D": 3}
-    if answer in letter_map:
-        selected = demo["options"][letter_map[answer]]
-        if selected == demo.get("correct"):
-            send_telegram_message(MAIN_BOT_TOKEN, chat_id, "✅ Correct! Donate ₹1 to unlock the real quiz!", reply_markup=get_keyboard(chat_id))
-        else:
-            send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"❌ Wrong! Correct: {demo.get('correct')}", reply_markup=get_keyboard(chat_id))
-    else:
-        send_telegram_message(MAIN_BOT_TOKEN, chat_id, "Reply with A, B, C, or D")
-    set_user_state(chat_id, None)
+    text = f"🎯 *DEMO QUIZ*\n\n⏱️ *15 Seconds*\n\n{demo['question']}\n\nA. London\nB. Berlin\nC. Paris\nD. Madrid\n\n*Reply A, B, C, or D*"
+    send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
 
 def create_payment(chat_id):
     users = load_users()
@@ -910,7 +888,6 @@ def send_question(chat_id, index):
         save_users(users)
         set_user_state(chat_id, None)
         
-        # Send admin notification if perfect score
         if score == 3:
             notify_admin_winner(chat_id)
         
@@ -928,16 +905,12 @@ def send_question(chat_id, index):
     set_user_data(chat_id, "current_q_index", index)
     set_user_data(chat_id, "question_start_time", int(datetime.now().timestamp()))
     
-    # NEW: Send question as image to prevent copy/paste
-    img_bytes = create_question_image(q['text'], q['options'], index + 1)
+    # Set time limit based on question number
+    time_limit = 15 if index == 0 else 11
     
-    if img_bytes:
-        # Send as photo (cannot copy text)
-        send_telegram_photo(MAIN_BOT_TOKEN, chat_id, img_bytes, caption=f"🎯 *Question {index+1}/3*", reply_markup=None)
-    else:
-        # Fallback to text if image creation fails
-        text = f"🎯 *Question {index+1}/3*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
-        send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
+    # FIXED: Show time limit without countdown
+    text = f"🎯 *Question {index+1}/3*\n\n⏱️ *{time_limit} Seconds*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
+    send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown")
 
 def handle_quiz_answer(chat_id, answer):
     users = load_users()
