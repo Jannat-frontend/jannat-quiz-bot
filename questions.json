@@ -46,53 +46,142 @@
     },
     {
       "id": "M3",
-      "text": "Who painted the Mona Lisa?",
-      "options": ["Van Gogh", "Picasso", "Da Vinci", "Rembrandt"],
-      "correct": "Da Vinci"
+      "text": "Which one of the following organisms is most commonly used as a bioindicator of air pollution?",
+      "options": ["Algae", "Lichens", "Ferns", "Mosses"],
+      "correct": "Lichens"
     },
     {
       "id": "M4",
-      "text": "What is the longest river in the world?",
-      "options": ["Amazon", "Nile", "Yangtze", "Mississippi"],
-      "correct": "Nile"
+      "text": "The term 'Eutrophication' refers to:",
+      "options": ["Excess nutrients in water bodies", "Soil erosion", "Acid rain formation", "Loss of biodiversity"],
+      "correct": "Excess nutrients in water bodies"
     },
     {
       "id": "M5",
-      "text": "Who invented the light bulb?",
-      "options": ["Nikola Tesla", "Thomas Edison", "Albert Einstein", "Alexander Graham Bell"],
-      "correct": "Thomas Edison"
+      "text": "Which international agreement established the concept of 'Common But Differentiated Responsibilities'?",
+      "options": ["Kyoto Protocol", "Rio Earth Summit", "Montreal Protocol", "Stockholm Convention"],
+      "correct": "Rio Earth Summit"
+    },
+    {
+      "id": "M6",
+      "text": "Mangrove forests are most effective in protecting coastal areas against:",
+      "options": ["Earthquakes", "Tsunamis and Storm Surges", "Volcanic Eruptions", "Droughts"],
+      "correct": "Tsunamis and Storm Surges"
+    },
+    {
+      "id": "M7",
+      "text": "Which of the following species is classified as a 'Keystone Species' in many ecosystems?",
+      "options": ["Tiger", "Elephant", "Honey Bee", "Earthworm"],
+      "correct": "Tiger"
+    },
+    {
+      "id": "M8",
+      "text": "Which of the following greenhouse gases has the highest global warming potential over a 100-year period?",
+      "options": ["Carbon Dioxide", "Methane", "Nitrous Oxide", "Sulfur Hexafluoride"],
+      "correct": "Sulfur Hexafluoride"
+    },
+    {
+      "id": "M9",
+      "text": "The Ramsar Convention is primarily concerned with the conservation of:",
+      "options": ["Forests", "Wetlands", "Grasslands", "Coral Reefs"],
+      "correct": "Wetlands"
+    },
+    {
+      "id": "M10",
+      "text": "Which of the following is NOT a biodiversity hotspot in India?",
+      "options": ["Western Ghats", "Eastern Himalayas", "Sundarbans", "Indo-Burma Region"],
+      "correct": "Sundarbans"
+    },
+    {
+      "id": "M11",
+      "text": "Bioaccumulation and biomagnification were first widely recognized after studies on which pesticide?",
+      "options": ["DDT", "Malathion", "Endosulfan", "Carbaryl"],
+      "correct": "DDT"
+    },
+    {
+      "id": "M12",
+      "text": "The 'Montreal Protocol' is regarded as one of the most successful environmental treaties because it addresses:",
+      "options": ["Climate Change", "Biodiversity Loss", "Ozone Layer Depletion", "Ocean Pollution"],
+      "correct": "Ozone Layer Depletion"
     }
   ],
   "hard": [
     {
       "id": "H1",
-      "text": "Which planet is known as the Red Planet?",
-      "options": ["Mars", "Jupiter", "Venus", "Saturn"],
-      "correct": "Mars"
-    },
-    {
-      "id": "H2",
-      "text": "What is the chemical symbol for Gold?",
-      "options": ["Go", "Gd", "Au", "Ag"],
-      "correct": "Au"
-    },
-    {
-      "id": "H3",
-      "text": "Who discovered Penicillin?",
-      "options": ["Marie Curie", "Alexander Fleming", "Louis Pasteur", "Isaac Newton"],
-      "correct": "Alexander Fleming"
-    },
-    {
-      "id": "H4",
       "text": "What is the smallest prime number?",
       "options": ["0", "1", "2", "3"],
       "correct": "2"
     },
     {
-      "id": "H5",
+      "id": "H2",
       "text": "Which country gifted the Statue of Liberty to the USA?",
       "options": ["England", "Spain", "France", "Germany"],
       "correct": "France"
+    },
+    {
+      "id": "H3",
+      "text": "Which deep-sea trench is the deepest point in the Indian Ocean?",
+      "options": ["Mariana Trench", "Java Trench (Sunda Trench)", "Puerto Rico Trench", "Tonga Trench"],
+      "correct": "Java Trench (Sunda Trench)"
+    },
+    {
+      "id": "H4",
+      "text": "Which landlocked country has the highest percentage of its territory designated as mountainous?",
+      "options": ["Nepal", "Tajikistan", "Kyrgyzstan", "Bhutan"],
+      "correct": "Tajikistan"
+    },
+    {
+      "id": "H5",
+      "text": "The Makgadikgadi Pan is one of the largest salt flats in the world. In which African country is it located?",
+      "options": ["Namibia", "South Africa", "Botswana", "Tanzania"],
+      "correct": "Botswana"
+    },
+    {
+      "id": "H6",
+      "text": "In the context of the Earth's atmosphere, what is the term for the boundary line separating the mesosphere and the thermosphere?",
+      "options": ["Stratopause", "Tropopause", "Mesopause", "Exobase"],
+      "correct": "Mesopause"
+    },
+    {
+      "id": "H7",
+      "text": "Which two countries share the longest continuous international land border in the world?",
+      "options": ["Russia and China", "USA and Mexico", "Argentina and Chile", "Canada and United States"],
+      "correct": "Canada and United States"
+    },
+    {
+      "id": "H8",
+      "text": "The Caspian Sea is the world's largest inland body of water. Which five countries border it?",
+      "options": [
+        "Russia, Kazakhstan, Turkmenistan, Iran, Azerbaijan",
+        "Russia, Uzbekistan, Turkmenistan, Iran, Georgia",
+        "Kazakhstan, Turkmenistan, Iran, Iraq, Russia",
+        "Russia, Kazakhstan, Turkmenistan, Iran, Turkey"
+      ],
+      "correct": "Russia, Kazakhstan, Turkmenistan, Iran, Azerbaijan"
+    },
+    {
+      "id": "H9",
+      "text": "Which major strait separates the Arabian Peninsula from the Horn of Africa?",
+      "options": ["Strait of Hormuz", "Strait of Gibraltar", "Bab-el-Mandeb Strait", "Bosphorus Strait"],
+      "correct": "Bab-el-Mandeb Strait"
+    },
+    {
+      "id": "H10",
+      "text": "What is the term used to describe an isolated, steep-sided residual hill or mountain that stands prominently above an otherwise flat plain?",
+      "options": ["Mesa", "Butte", "Inselberg (Monadnock)", "Plateau"],
+      "correct": "Inselberg (Monadnock)"
+    },
+    {
+      "id": "H11",
+      "text": "Which is the only country in Central America that has both the Caribbean Sea and the Pacific Ocean as its borders but does not share a land border with the others?",
+      "options": ["Costa Rica", "Panama", "Nicaragua", "Honduras"],
+      "correct": "Nicaragua"
+    },
+    {
+      "id": "H12",
+      "text": "The Dinaric Alps are a mountain range located in which major European peninsula?",
+      "options": ["Iberian Peninsula", "Italian Peninsula", "Scandinavian Peninsula", "Balkan Peninsula"],
+      "correct": "Balkan Peninsula"
     }
   ]
 }
