@@ -86,6 +86,7 @@ def notify_admin_winner(chat_id):
 🏆 *NEW QUIZ WINNER!* 🏆
 
 🆔 TG ID: `{chat_id}`
+👤 Username: {u.get('username', 'Not set')}
 👨 Name: {u.get('name', 'Not set')}
 📍 Place: {u.get('place', 'Not set')}
 📱 Phone: {u.get('phone', 'Not set')}
@@ -217,7 +218,12 @@ def telegram_webhook():
             message = update_data['message']
             chat_id = message['chat']['id']
             text = message.get('text', '')
+            username = message.get('from', {}).get('username', '')
+            
             logger.info(f"📱 Main Bot - Message from {chat_id}: {text}")
+            
+            # Store username for registration
+            set_user_data(chat_id, "temp_username", username)
             
             if BOT_MAINTENANCE and chat_id != ADMIN_ID:
                 send_telegram_message(MAIN_BOT_TOKEN, chat_id, "🔧 *Quiz is under maintenance for sometime.*\n\nPlease try again later.", parse_mode="Markdown")
@@ -348,16 +354,34 @@ def razorpay_webhook():
         logger.error(f"Razorpay webhook error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ========== PAYMENT SUCCESS PAGE ==========
+# ========== PAYMENT SUCCESS PAGE - FIXED with Return to TG Button ==========
 @web_app.route("/payment-success", methods=["GET"])
 def payment_success():
     return """
     <!DOCTYPE html>
     <html>
-    <head><title>Donation Received</title></head>
-    <body style="text-align: center; padding: 50px;">
-        <h1>✅ Thank you for your Donation!</h1>
-        <p>Return to Telegram and press Start Quiz.</p>
+    <head>
+        <title>Donation Received</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+            .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+            h1 { color: #28a745; font-size: 28px; }
+            .btn { display: inline-block; background: #0088cc; color: white; padding: 15px 40px; border-radius: 30px; text-decoration: none; font-size: 18px; font-weight: bold; margin-top: 20px; }
+            .btn:hover { background: #006699; }
+            p { color: #666; font-size: 16px; }
+            .emoji { font-size: 50px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="emoji">✅</div>
+            <h1>Thank you for your Donation!</h1>
+            <p>Your payment was successful.</p>
+            <p>Your quiz is being unlocked...</p>
+            <a href="https://t.me/Jannat_Foundationbot" class="btn">📱 Return to Telegram</a>
+            <p style="margin-top: 20px; font-size: 14px; color: #999;">Open Telegram and press <strong>Start Quiz</strong></p>
+        </div>
     </body>
     </html>
     """
@@ -519,6 +543,7 @@ def send_winners_panel(chat_id):
             winners.append({
                 "id": uid,
                 "name": user.get("name", "Not set"),
+                "username": user.get("username", "Not set"),
                 "place": user.get("place", "Not set"),
                 "upi": user.get("upi_id", "Not set"),
                 "score": user.get("current_quiz_score", 0)
@@ -528,7 +553,7 @@ def send_winners_panel(chat_id):
         return
     winner_text = "🏆 *WINNERS LIST* 🏆\n\n"
     for w in winners:
-        winner_text += f"👤 *{w['name']}*\n📍 {w['place']}\n💸 `{w['upi']}`\n🆔 {w['id']}\n⭐ {w['score']}/3\n\n"
+        winner_text += f"👤 @{w['username']}\n🆔 {w['id']}\n📍 {w['place']}\n💸 `{w['upi']}`\n⭐ {w['score']}/3\n\n"
     send_telegram_message(ADMIN_BOT_TOKEN, chat_id, winner_text, parse_mode="Markdown", reply_markup=get_admin_keyboard())
 
 def export_users_data(chat_id):
@@ -665,6 +690,7 @@ def get_missing_fields(chat_id):
         missing.append("💸 Set UPI (use the button)")
     return missing
 
+# ========== PROFILE - UPDATED with TG ID, Username & Blanks ==========
 def show_profile(chat_id):
     users = load_users()
     if str(chat_id) not in users:
@@ -672,22 +698,29 @@ def show_profile(chat_id):
         return
     
     u = users[str(chat_id)]
+    
+    # Get username from stored data
+    username = u.get('username', '')
+    username_display = f"@{username}" if username else "Not set"
+    
     text = f"""
 👤 *Your Profile*
 
 🆔 TG ID: `{chat_id}`
-📱 Phone: {u.get('phone', 'Not set')}
-👨 Name: {u.get('name', 'Not set')}
-📍 Place: {u.get('place', 'Not set')}
-📧 Email: {u.get('email', 'Not set')}
-💸 UPI: {u.get('upi_id', 'Not set')}
+👤 Username: {username_display}
+📱 Phone: {u.get('phone', '________')}
+👨 Name: {u.get('name', '________')}
+📍 Place: {u.get('place', '________')}
+📧 Email: {u.get('email', '________')}
+💸 UPI: {u.get('upi_id', '________')}
 💰 Donated: {'✅ Yes' if u.get('payment_completed') else '❌ No'}
 🏆 Score: {u.get('current_quiz_score', 0)}/3
 
-*To update:*
+*To update your details:*
 ✏️ Name YourName
 📍 Place YourCity
 📧 Email your@email.com
+💸 Set UPI (use the button below)
 """
     send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
 
@@ -712,6 +745,8 @@ def complete_registration(chat_id, password):
         return
     users = load_users()
     phone = get_user_data(chat_id, "temp_phone")
+    username = get_user_data(chat_id, "temp_username") or ""
+    
     if str(chat_id) in users:
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "✅ Already registered!", reply_markup=get_keyboard(chat_id))
         return
@@ -719,6 +754,7 @@ def complete_registration(chat_id, password):
         "phone": phone,
         "password": hash_password(password),
         "name": "", "place": "", "email": "", "upi_id": "",
+        "username": username,
         "payment_completed": False, "quiz_locked": False,
         "current_question_index": 0, "current_quiz_score": 0,
         "quiz_active": False, "waiting_next": False, "registered": True,
@@ -769,7 +805,7 @@ def create_payment(chat_id):
         return
     try:
         payment_link = razorpay_client.payment_link.create({
-            "amount": 1100,  # ₹11 in paise
+            "amount": 1100,
             "currency": "INR",
             "description": f"Jannat Donation - User {chat_id}",
             "notes": {"telegram_id": str(chat_id)},
@@ -800,7 +836,6 @@ def start_quiz(chat_id):
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "🔒 *Quiz Locked*\n\nYou have already completed the quiz.\n\nDonate ₹11 again to play a new set of questions!", reply_markup=get_keyboard(chat_id))
         return
     
-    # Get questions - Easy, Medium, Hard (internal only)
     easy_q = get_random_question_by_difficulty("easy")
     medium_q = get_random_question_by_difficulty("medium")
     hard_q = get_random_question_by_difficulty("hard")
@@ -832,13 +867,9 @@ def send_question(chat_id, index):
         
         if score == 3:
             notify_admin_winner(chat_id)
-        
-        if not profile_complete(chat_id):
-            missing_fields = get_missing_fields(chat_id)
-            missing_text = "\n".join(missing_fields)
-            send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n⚠️ *Before claiming your prize, please complete:*\n\n{missing_text}\n\nUse the Profile button to update your details.", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
+            send_telegram_message(MAIN_BOT_TOKEN, chat_id, "🎉 *CONGRATULATIONS!* 🎉\n\n🏆 *You won ₹1000!*\n\n❤️ *Prize will be paid by Jannat Foundation on Sunday.*\n\n📝 Tap '💸 Set UPI' to claim your prize!", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
         else:
-            send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Set UPI' to claim ₹1000!\n\n❤️ *Jannat Foundation will pay your prize on Sunday.*\n\n*Donate ₹11 again to play a new quiz!*", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
+            send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"📊 *Quiz Completed!*\n\nYour score: {score}/3\n\nThank you for participating!", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
         return
     
     q = session_questions[index]
@@ -847,7 +878,6 @@ def send_question(chat_id, index):
     set_user_data(chat_id, "current_q_index", index)
     set_user_data(chat_id, "question_start_time", int(datetime.now().timestamp()))
     
-    # Set time limit based on question number
     time_limit = 15 if index == 0 else 11
     
     text = f"🎯 *Question {index+1}/3*\n\n⏱️ *{time_limit} Seconds*\n\n{q['text']}\n\nA. {q['options'][0]}\nB. {q['options'][1]}\nC. {q['options'][2]}\nD. {q['options'][3]}\n\n*Reply A, B, C, or D*"
@@ -862,12 +892,10 @@ def handle_quiz_answer(chat_id, answer):
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "Press 'NEXT' for next question.")
         return
     
-    # Check timeout with different limits per question
     question_start = get_user_data(chat_id, "question_start_time")
     if question_start:
         now = int(datetime.now().timestamp())
         q_index = get_user_data(chat_id, "current_q_index")
-        # Question 1: 15 seconds, Question 2 & 3: 11 seconds
         allowed_time = 15 if q_index == 0 else 11
         if now - question_start > allowed_time:
             users[str(chat_id)]["quiz_active"] = False
@@ -908,19 +936,21 @@ def handle_quiz_answer(chat_id, answer):
             
             if score == 3:
                 notify_admin_winner(chat_id)
-            
-            if not profile_complete(chat_id):
-                missing_fields = get_missing_fields(chat_id)
-                missing_text = "\n".join(missing_fields)
-                send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"✅ *Correct!*\n\n🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n⚠️ *Before claiming your prize, please complete:*\n\n{missing_text}\n\nUse the Profile button to update your details.", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
+                send_telegram_message(MAIN_BOT_TOKEN, chat_id, "✅ *Correct!*\n\n🎉 *CONGRATULATIONS!* 🎉\n\n🏆 *You won ₹1000!*\n\n❤️ *Prize will be paid by Jannat Foundation on Sunday.*\n\n📝 Tap '💸 Set UPI' to claim your prize!", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
             else:
-                send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"✅ *Correct!*\n\n🎉 *QUIZ COMPLETED!* 🎉\n\nYour score: {score}/3\n\n🏆 Tap '💸 Set UPI' to claim ₹1000!\n\n❤️ *Jannat Foundation will pay your prize on Sunday.*\n\n*Donate ₹11 again to play a new quiz!*", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
+                send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"📊 *Quiz Completed!*\n\nYour score: {score}/3\n\nThank you for participating!", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
         else:
-            missing = get_missing_fields(chat_id)
-            msg = f"✅ *Correct!*\n\nPress 'NEXT' for Question {q_index + 2}"
-            if missing:
-                msg += "\n\n📝 *Please update these details:*\n" + "\n".join(missing)
-                msg += "\n\nUse the Profile button to update."
+            # NEW: Show missing fields reminder ONLY on Question 3 (index = 2)
+            if q_index == 1:  # This is Question 2, show ONLY correct message
+                msg = f"✅ *Correct!*\n\nPress 'NEXT' for Question {q_index + 2}"
+            else:
+                # For other questions, show missing fields reminder
+                missing = get_missing_fields(chat_id)
+                msg = f"✅ *Correct!*\n\nPress 'NEXT' for Question {q_index + 2}"
+                if missing and q_index == 0:  # Only show after Question 1
+                    msg += "\n\n📝 *Please update these details:*\n" + "\n".join(missing)
+                    msg += "\n\nUse the Profile button to update."
+            
             next_keyboard = {"keyboard": [["NEXT"]], "resize_keyboard": True}
             send_telegram_message(MAIN_BOT_TOKEN, chat_id, msg, reply_markup=next_keyboard)
     else:
@@ -978,18 +1008,15 @@ def main():
     print("✅ Flask server started")
     
     async def set_webhooks():
-        # Main bot webhook
         main_app = Application.builder().token(MAIN_BOT_TOKEN).build()
         await main_app.bot.set_webhook("https://jannat-quiz-bot.onrender.com/webhook")
         print(f"✅ Main bot webhook set")
         
-        # Admin bot webhook
         if ADMIN_BOT_TOKEN:
             admin_app = Application.builder().token(ADMIN_BOT_TOKEN).build()
             await admin_app.bot.set_webhook("https://jannat-quiz-bot.onrender.com/admin-webhook")
             print(f"✅ Admin bot webhook set")
         
-        # Lobby bot webhook
         if LOBBY_BOT_TOKEN:
             lobby_app = Application.builder().token(LOBBY_BOT_TOKEN).build()
             await lobby_app.bot.set_webhook("https://jannat-quiz-bot.onrender.com/lobby-webhook")
