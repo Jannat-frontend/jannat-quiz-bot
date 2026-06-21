@@ -768,7 +768,7 @@ def create_payment(chat_id):
         return
     try:
         payment_link = razorpay_client.payment_link.create({
-            "amount": 100, "currency": "INR",
+            "amount": 1500, "currency": "INR",
             "description": f"Jannat Donation - User {chat_id}",
             "notes": {"telegram_id": str(chat_id)},
             "callback_url": "https://jannat-quiz-bot.onrender.com/payment-success",
