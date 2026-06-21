@@ -354,7 +354,7 @@ def razorpay_webhook():
         logger.error(f"Razorpay webhook error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ========== PAYMENT SUCCESS PAGE - FIXED with Return to TG Button ==========
+# ========== PAYMENT SUCCESS PAGE - FIXED with Working TG Button ==========
 @web_app.route("/payment-success", methods=["GET"])
 def payment_success():
     return """
@@ -367,10 +367,11 @@ def payment_success():
             body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
             .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
             h1 { color: #28a745; font-size: 28px; }
-            .btn { display: inline-block; background: #0088cc; color: white; padding: 15px 40px; border-radius: 30px; text-decoration: none; font-size: 18px; font-weight: bold; margin-top: 20px; }
+            .btn { display: inline-block; background: #0088cc; color: white; padding: 15px 40px; border-radius: 30px; text-decoration: none; font-size: 18px; font-weight: bold; margin-top: 20px; border: none; cursor: pointer; }
             .btn:hover { background: #006699; }
             p { color: #666; font-size: 16px; }
             .emoji { font-size: 50px; }
+            .tg-link { color: #0088cc; text-decoration: none; font-weight: bold; }
         </style>
     </head>
     <body>
@@ -379,8 +380,11 @@ def payment_success():
             <h1>Thank you for your Donation!</h1>
             <p>Your payment was successful.</p>
             <p>Your quiz is being unlocked...</p>
-            <a href="https://t.me/Jannat_Foundationbot" class="btn">📱 Return to Telegram</a>
-            <p style="margin-top: 20px; font-size: 14px; color: #999;">Open Telegram and press <strong>Start Quiz</strong></p>
+            <a href="tg://resolve?domain=Jannat_Foundationbot" class="btn">📱 Open Telegram</a>
+            <p style="margin-top: 20px; font-size: 14px; color: #999;">
+                Or copy this link: <span class="tg-link">t.me/Jannat_Foundationbot</span>
+            </p>
+            <p style="margin-top: 10px; font-size: 14px; color: #999;">Open Telegram and press <strong>Start Quiz</strong></p>
         </div>
     </body>
     </html>
@@ -716,11 +720,11 @@ def show_profile(chat_id):
 💰 Donated: {'✅ Yes' if u.get('payment_completed') else '❌ No'}
 🏆 Score: {u.get('current_quiz_score', 0)}/3
 
-*To update your details:*
+*To update your details send:*
 ✏️ Name YourName
 📍 Place YourCity
 📧 Email your@email.com
-💸 Set UPI (use the button below)
+💸 Use the Set UPI button below
 """
     send_telegram_message(MAIN_BOT_TOKEN, chat_id, text, parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
 
@@ -940,16 +944,14 @@ def handle_quiz_answer(chat_id, answer):
             else:
                 send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"📊 *Quiz Completed!*\n\nYour score: {score}/3\n\nThank you for participating!", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
         else:
-            # NEW: Show missing fields reminder ONLY on Question 3 (index = 2)
-            if q_index == 1:  # This is Question 2, show ONLY correct message
-                msg = f"✅ *Correct!*\n\nPress 'NEXT' for Question {q_index + 2}"
-            else:
-                # For other questions, show missing fields reminder
-                missing = get_missing_fields(chat_id)
-                msg = f"✅ *Correct!*\n\nPress 'NEXT' for Question {q_index + 2}"
-                if missing and q_index == 0:  # Only show after Question 1
-                    msg += "\n\n📝 *Please update these details:*\n" + "\n".join(missing)
-                    msg += "\n\nUse the Profile button to update."
+            # Show missing fields reminder ONLY before Question 3 (after Question 2)
+            missing = get_missing_fields(chat_id)
+            msg = f"✅ *Correct!*\n\nPress 'NEXT' for Question {q_index + 2}"
+            
+            # Show reminder only when moving to Question 3
+            if q_index == 1 and missing:  # After Question 2, before Question 3
+                msg += "\n\n📝 *Please update these details:*\n" + "\n".join(missing)
+                msg += "\n\nUse the Profile button to update."
             
             next_keyboard = {"keyboard": [["NEXT"]], "resize_keyboard": True}
             send_telegram_message(MAIN_BOT_TOKEN, chat_id, msg, reply_markup=next_keyboard)
