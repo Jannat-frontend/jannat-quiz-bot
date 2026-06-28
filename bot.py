@@ -100,6 +100,75 @@ def notify_admin_winner(chat_id):
 """
     send_telegram_message(ADMIN_BOT_TOKEN, ADMIN_ID, msg, parse_mode="Markdown")
 
+# ========== WEEKLY WINNERS & COMMUNITY STATS ==========
+def get_community_stats():
+    """Get community statistics"""
+    users = load_users()
+    
+    total_registered = sum(1 for u in users.values() if u.get("registered", False))
+    total_donations = sum(1 for u in users.values() if u.get("payment_completed"))
+    total_winners = sum(1 for u in users.values() if u.get("current_quiz_score", 0) == 3 and u.get("payment_completed"))
+    
+    today = datetime.now().date()
+    new_today = 0
+    for u in users.values():
+        reg_date = u.get("registered_on", "")
+        if reg_date:
+            try:
+                reg_day = datetime.fromisoformat(reg_date).date()
+                if reg_day == today:
+                    new_today += 1
+            except:
+                pass
+    
+    return total_registered, total_donations, total_winners, new_today
+
+def get_weekly_winners():
+    """Get winners from last 7 days"""
+    users = load_users()
+    winners = []
+    today = datetime.now().date()
+    
+    for uid, user in users.items():
+        if user.get("current_quiz_score", 0) == 3 and user.get("payment_completed"):
+            reg_date = user.get("registered_on", "")
+            if reg_date:
+                try:
+                    reg_day = datetime.fromisoformat(reg_date).date()
+                    days_diff = (today - reg_day).days
+                    if days_diff <= 7:
+                        winners.append({
+                            "id": uid,
+                            "name": user.get("name", "Not set"),
+                            "place": user.get("place", "Not set"),
+                            "upi": user.get("upi_id", "Not set"),
+                            "status": user.get("paid_status", "Pending"),
+                            "registered_on": reg_date
+                        })
+                except:
+                    pass
+    
+    winners.sort(key=lambda x: x.get("registered_on", ""), reverse=True)
+    return winners
+
+def mark_winner_paid(chat_id, user_id):
+    users = load_users()
+    if user_id in users:
+        users[user_id]["paid_status"] = "Paid"
+        save_users(users)
+        auto_backup_users()
+        return True
+    return False
+
+def mark_winner_pending(chat_id, user_id):
+    users = load_users()
+    if user_id in users:
+        users[user_id]["paid_status"] = "Pending"
+        save_users(users)
+        auto_backup_users()
+        return True
+    return False
+
 # ========== LOBBY BOT (COMMUNITY BOT) WEBHOOK ==========
 @web_app.route("/lobby-webhook", methods=["POST"])
 def lobby_webhook():
@@ -192,6 +261,7 @@ As a thank you, donors can participate in our quiz and win ₹1000 cash prize!
     ])
     send_telegram_message(LOBBY_BOT_TOKEN, chat_id, about_msg, parse_mode="Markdown", reply_markup=keyboard)
 
+# ========== FIXED: Share Options with Correct Links ==========
 def send_share_options(chat_id):
     share_msg = (
         "📢 *Share with your friends!*\n\n"
@@ -221,13 +291,11 @@ def telegram_webhook():
             
             logger.info(f"📱 Main Bot - Message from {chat_id}: {text}")
             
-            # Auto-update username for existing users
             users = load_users()
             if str(chat_id) in users:
                 users[str(chat_id)]["username"] = username
                 save_users(users)
             
-            # Store username for registration
             set_user_data(chat_id, "temp_username", username)
             
             if BOT_MAINTENANCE and chat_id != ADMIN_ID:
@@ -318,6 +386,10 @@ def admin_webhook():
                 start_maintenance_mode(chat_id)
             elif text == "💾 Backup Now":
                 manual_backup(chat_id)
+            elif text == "📊 Community Stats":
+                send_community_stats(chat_id)
+            elif text == "📋 Weekly Winners":
+                send_weekly_winners(chat_id)
             elif text == "🔙 Main Menu":
                 send_admin_keyboard(chat_id)
             else:
@@ -333,7 +405,7 @@ def admin_webhook():
         logger.error(f"Admin webhook error: {e}")
         return "Error", 500
 
-# ========== RAZORPAY WEBHOOK - FIXED VERIFICATION ==========
+# ========== RAZORPAY WEBHOOK ==========
 @web_app.route("/razorpay-webhook", methods=["POST"])
 def razorpay_webhook():
     try:
@@ -369,7 +441,7 @@ def razorpay_webhook():
         logger.error(f"Webhook error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ========== PAYMENT SUCCESS PAGE - FIXED WITH WORKING TG BUTTON ==========
+# ========== PAYMENT SUCCESS PAGE ==========
 @web_app.route("/payment-success", methods=["GET"])
 def payment_success():
     return """
@@ -524,8 +596,9 @@ def send_admin_keyboard(chat_id):
     keyboard = {
         "keyboard": [
             ["📊 Statistics", "✅ Verify User"],
-            ["📢 Broadcast", "🏆 Winners"],
+            ["📢 Broadcast", "📋 Weekly Winners"],
             ["📥 Export Data", "💾 Backup Now"],
+            ["📊 Community Stats", "🏆 Winners"],
             ["🔧 Stop Bot", "▶️ Start Bot"],
             ["🔙 Main Menu"]
         ],
@@ -538,8 +611,9 @@ def get_admin_keyboard():
     return {
         "keyboard": [
             ["📊 Statistics", "✅ Verify User"],
-            ["📢 Broadcast", "🏆 Winners"],
+            ["📢 Broadcast", "📋 Weekly Winners"],
             ["📥 Export Data", "💾 Backup Now"],
+            ["📊 Community Stats", "🏆 Winners"],
             ["🔧 Stop Bot", "▶️ Start Bot"],
             ["🔙 Main Menu"]
         ],
@@ -552,6 +626,51 @@ def send_admin_stats(chat_id):
     paid = sum(1 for u in users.values() if u.get("payment_completed"))
     winners = sum(1 for u in users.values() if u.get("current_quiz_score", 0) == 3)
     msg = f"📊 *Statistics*\n\n👥 Registered: {registered}\n💰 Donated: {paid}\n🏆 Winners: {winners}"
+    send_telegram_message(ADMIN_BOT_TOKEN, chat_id, msg, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+
+def send_community_stats(chat_id):
+    """Send community statistics to admin"""
+    total_registered, total_donations, total_winners, new_today = get_community_stats()
+    
+    msg = f"""
+📊 *COMMUNITY STATS* 📊
+
+👥 Total Registered: {total_registered}
+💰 Total Donations: {total_donations}
+🏆 Total Winners: {total_winners}
+📅 New Today: {new_today}
+
+📢 Channel: https://t.me/JannatFoundationChannel
+"""
+    send_telegram_message(ADMIN_BOT_TOKEN, chat_id, msg, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+
+def send_weekly_winners(chat_id):
+    """Send weekly winners list to admin"""
+    winners = get_weekly_winners()
+    
+    if not winners:
+        msg = "🏆 *No winners this week.*\n\nKeep promoting! 🚀"
+        send_telegram_message(ADMIN_BOT_TOKEN, chat_id, msg, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+        return
+    
+    msg = "🏆 *WEEKLY WINNERS* 🏆\n\n"
+    msg += "For Sunday Payout\n"
+    msg += "─" * 30 + "\n\n"
+    
+    for w in winners:
+        status_icon = "✅" if w["status"] == "Paid" else "⏳"
+        msg += f"👤 {w['name']}\n"
+        msg += f"📍 {w['place']}\n"
+        msg += f"💸 {w['upi']}\n"
+        msg += f"🆔 ID: {w['id']}\n"
+        msg += f"Status: {status_icon} {w['status']}\n"
+        msg += "─" * 20 + "\n"
+    
+    msg += "\n*To mark as Paid:*\n"
+    msg += "/pay USER_ID\n"
+    msg += "*To mark as Pending:*\n"
+    msg += "/unpay USER_ID"
+    
     send_telegram_message(ADMIN_BOT_TOKEN, chat_id, msg, parse_mode="Markdown", reply_markup=get_admin_keyboard())
 
 def send_winners_panel(chat_id):
@@ -709,7 +828,7 @@ def get_missing_fields(chat_id):
         missing.append("💸 Set UPI (use the button)")
     return missing
 
-# ========== PROFILE - UPDATED WITH TG ID, Username & Blanks ==========
+# ========== PROFILE ==========
 def show_profile(chat_id):
     users = load_users()
     if str(chat_id) not in users:
@@ -717,7 +836,6 @@ def show_profile(chat_id):
         return
     
     u = users[str(chat_id)]
-    
     username = u.get('username', '')
     username_display = f"@{username}" if username else "Not set"
     
@@ -748,7 +866,6 @@ def update_profile_field(chat_id, text, field):
         send_telegram_message(MAIN_BOT_TOKEN, chat_id, "❌ Register first.", reply_markup=get_keyboard(chat_id))
         return
     
-    # Clean the text to extract value (supports both with and without emojis)
     cleaned_text = text.replace("✏️ Name ", "").replace("Name ", "")
     cleaned_text = cleaned_text.replace("📍 Place ", "").replace("Place ", "")
     cleaned_text = cleaned_text.replace("📧 Email ", "").replace("Email ", "")
@@ -829,7 +946,7 @@ def create_payment(chat_id):
         return
     try:
         payment_link = razorpay_client.payment_link.create({
-            "amount": 1500,  # ₹15 in paise
+            "amount": 1500,
             "currency": "INR",
             "description": f"Jannat Donation - User {chat_id}",
             "notes": {"telegram_id": str(chat_id)},
@@ -950,7 +1067,6 @@ def handle_quiz_answer(chat_id, answer):
         
         session_questions = users.get(str(chat_id), {}).get("session_questions", [])
         if q_index + 1 >= len(session_questions):
-            # Last question - complete quiz
             users[str(chat_id)]["quiz_active"] = False
             users[str(chat_id)]["quiz_locked"] = True
             save_users(users)
@@ -964,11 +1080,9 @@ def handle_quiz_answer(chat_id, answer):
             else:
                 send_telegram_message(MAIN_BOT_TOKEN, chat_id, f"📊 *Quiz Completed!*\n\nYour score: {score}/3\n\nThank you for participating!", parse_mode="Markdown", reply_markup=get_keyboard(chat_id))
         else:
-            # Show missing fields reminder ONLY before Question 3
             missing = get_missing_fields(chat_id)
             msg = f"✅ *Correct!*\n\nPress 'NEXT' for Question {q_index + 2}"
             
-            # Show reminder only when moving to Question 3
             if q_index == 1 and missing:
                 msg += "\n\n📝 *Please update these details:*\n" + "\n".join(missing)
                 msg += "\n\nUse the Profile button to update."
@@ -976,7 +1090,6 @@ def handle_quiz_answer(chat_id, answer):
             next_keyboard = {"keyboard": [["NEXT"]], "resize_keyboard": True}
             send_telegram_message(MAIN_BOT_TOKEN, chat_id, msg, reply_markup=next_keyboard)
     else:
-        # Wrong answer - end quiz
         users[str(chat_id)]["quiz_active"] = False
         users[str(chat_id)]["quiz_locked"] = True
         save_users(users)
